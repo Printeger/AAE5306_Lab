@@ -1,0 +1,136 @@
+# AAE5306 Lab Configuration File
+# Stereo Vision Processing Pipeline for EuRoC MAV Dataset
+# 
+# This configuration file controls all parameters for the complete processing pipeline
+# from calibration extraction to depth recovery.
+
+# =============================================================================
+# PATHS CONFIGURATION
+# =============================================================================
+paths:
+  # Input data paths
+  euroc_calibration: "data/euroc/MH_01_easy.yaml"     # EuRoC dataset calibration file
+  rosbag_file: "data/euroc/rosbags/MH_01_easy.bag"    # ROS bag file with stereo images
+  
+  # Output paths
+  output_base: "results"                               # Base output directory
+  calibration_output: "config/euroc_calibration.yaml"  # Processed calibration file
+  images_output: "data/extracted_images"               # Extracted images directory
+  features_output: "results/features"                  # Feature detection results
+  matches_output: "results/matches"                    # Feature matching results
+  depth_output: "results/depth"                        # Depth recovery results
+
+# =============================================================================
+# TASK 1: CALIBRATION EXTRACTION
+# =============================================================================
+calibration:
+  enabled: true
+  # The calibration extraction has no adjustable parameters
+  # It simply reads and converts the EuRoC calibration format
+
+# =============================================================================
+# TASK 2: IMAGE EXTRACTION
+# =============================================================================
+image_extraction:
+  enabled: true
+  
+  # ROS topics
+  cam0_topic: "/cam0/image_raw"   # Left camera topic
+  cam1_topic: "/cam1/image_raw"   # Right camera topic
+  
+  # Extraction parameters
+  skip_frames: 10                 # Extract every Nth frame (10 = 2Hz from 20Hz data)
+  max_pairs: 300                  # Maximum number of image pairs to extract
+  
+  # Options
+  info_only: false                # If true, only display bag info without extracting
+
+# =============================================================================
+# TASK 3: FEATURE DETECTION
+# =============================================================================
+feature_detection:
+  enabled: true
+  
+  # Feature detectors to use
+  # Available: sift, orb, fast, harris
+  detectors:
+    - sift
+    - orb
+    - fast
+    - harris
+  
+  # Image selection for feature detection
+  # Which extracted image pair to process (0-based index)
+  test_image_index: 50            # Use the 50th extracted image pair
+  
+  # Visualization options
+  visualize: true                 # Generate feature visualization images
+  save_statistics: true           # Save detection statistics to JSON
+
+# =============================================================================
+# TASK 4: FEATURE MATCHING
+# =============================================================================
+feature_matching:
+  enabled: true
+  
+  # Matching detectors (must have descriptors)
+  # Only SIFT and ORB support matching
+  detectors:
+    - sift
+    - orb
+  
+  # Image selection for matching
+  test_image_index: 50            # Use the 50th extracted image pair
+  
+  # SIFT matching parameters
+  sift:
+    ratio_threshold: 0.75         # Lowe's ratio test threshold (0.7-0.8 typical)
+    epipolar_threshold: 2.0       # Max y-coordinate difference in pixels
+  
+  # ORB matching parameters
+  orb:
+    ratio_threshold: 0.75         # Lowe's ratio test threshold
+    epipolar_threshold: 2.0       # Max y-coordinate difference in pixels
+  
+  # Visualization options
+  visualize: true                 # Generate match visualization images
+  max_display_matches: 100        # Maximum matches to display in visualization
+
+# =============================================================================
+# TASK 5: DEPTH RECOVERY
+# =============================================================================
+depth_recovery:
+  enabled: true
+  
+  # Depth computation parameters
+  min_depth: 0.5                  # Minimum valid depth in meters
+  max_depth: 15.0                 # Maximum valid depth in meters
+  
+  # Which detector's matches to use for depth recovery
+  # Available: sift, orb
+  detector: sift                  # Primary detector for depth recovery
+  
+  # Point cloud options
+  use_depth_coloring: true        # Color points by depth (jet colormap)
+  
+  # Visualization options
+  visualize: true                 # Generate depth visualizations
+  generate_depth_map: true        # Generate 2D depth map visualization
+  generate_2d_projections: true   # Generate 2D point cloud projections
+
+# =============================================================================
+# ADVANCED OPTIONS
+# =============================================================================
+advanced:
+  # Verbosity
+  verbose: true                   # Print detailed progress information
+  
+  # Performance
+  use_multiprocessing: false      # Enable parallel processing (not implemented yet)
+  
+  # Quality control
+  min_matches_required: 50        # Minimum matches required for depth recovery
+  
+  # File formats
+  image_format: "png"             # Format for saving images (png, jpg)
+  pointcloud_format: "ply"        # Format for point clouds (ply)

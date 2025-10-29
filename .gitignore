@@ -1,2 +1,5 @@
 data/
 doc/
+results/
+__pycache__/
+config/

@@ -7,37 +7,39 @@ This laboratory implements a complete stereo vision processing pipeline using th
 ## Project Structure
 
 ```
-AAE5306_Lab/
-├── config.yaml                  # Main configuration file
-├── utils.py                     # Utility functions
-├── 1. extract_calibration.py   # Task 1: Camera calibration extraction
-├── 2. extract_images.py        # Task 2: Image extraction
-├── 3. feature_detection.py     # Task 3: Feature detection
-├── 4. feature_matching.py      # Task 4: Feature matching
-├── 5. depth_recovery.py        # Task 5: Depth recovery
-├── data/                        # Data directory
-│   ├── euroc/                  # EuRoC dataset
-│   │   ├── MH_01_easy.yaml    # Calibration file
-│   │   └── rosbags/
-│   │       └── MH_01_easy.bag # ROS bag file
-│   └── extracted_images/       # Extracted images
-│       ├── cam0/               # Left camera images
-│       ├── cam1/               # Right camera images
-│       └── timestamps.txt      # Timestamps
-├── config/                      # Configuration output directory
-│   └── euroc_calibration.yaml  # Processed calibration
-├── results/                     # Results directory
-│   ├── features/               # Feature detection results
-│   ├── matches/                # Feature matching results
-│   └── depth/                  # Depth recovery results
-└── README.md                    # This file
+AAE5306_Lab
+	│   ├── README.md
+	│   ├── run_demo.sh
+	│   ├── run_pipeline.py
+	│   ├── setup.sh
+	│   ├── src
+	│   │   └── aae5306_stereo_vision
+	│   │       ├── CMakeLists.txt
+	│   │       ├── config
+	│   │       │   └── stereo_params.yaml
+	│   │       ├── depth_recovery_node.py
+	│   │       ├── feature_detection_node.py
+	│   │       ├── feature_matching_node.py
+	│   │       ├── launch
+	│   │       │   ├── depth_recovery.launch
+	│   │       │   ├── feature_detection.launch
+	│   │       │   ├── feature_matching.launch
+	│   │       │   ├── stereo_pipeline.launch
+	│   │       │   └── stereo_visualization.launch
+	│   │       ├── msg
+	│   │       │   ├── DepthStats.msg
+	│   │       │   ├── FeatureStats.msg
+	│   │       │   └── MatchStats.msg
+	│   │       ├── package.xml
+	│   │       └── rviz
+	│   │           └── stereo_vision.rviz
+	│   ├── utils.py
+	│   └── yaml_parser.py
 ```
 
 ## Requirements
-
-## Requirements
-
-### Python Version
+- ROS noetic
+- Ubuntu 20.04
 - Python 3.7+
 
 ### Dependencies
@@ -59,9 +61,7 @@ pip install rospkg
 
 ## Configuration
 
-## Configuration
-
-All parameters are configured in the `config.yaml` file. Main configuration items include:
+<!-- All parameters are configured in the `config.yaml` file. Main configuration items include:
 
 ### 1. Paths Configuration
 ```yaml
@@ -70,107 +70,79 @@ paths:
   rosbag_file: "data/euroc/rosbags/MH_01_easy.bag"
   output_base: "results"
   # ... other paths
-```
+``` -->
 
-### 2. Task Switches
-Each task has an `enabled` option to control execution:
-```yaml
-calibration:
-  enabled: true
-
-image_extraction:
-  enabled: true
-  
-# ... other tasks
-```
-
-### 3. Image Extraction Parameters
-```yaml
-image_extraction:
-  skip_frames: 10      # Extract every 10th frame
-  max_pairs: 300       # Maximum 300 image pairs
-  cam0_topic: "/cam0/image_raw"
-  cam1_topic: "/cam1/image_raw"
-```
-
-### 4. Feature Detection Parameters
-```yaml
-feature_detection:
-  detectors:           # Detectors to use
-    - sift
-    - orb
-    - fast
-    - harris
-  test_image_index: 50 # Use the 50th image pair for testing
-  visualize: true      # Generate visualizations
-```
-
-### 5. Feature Matching Parameters
-```yaml
-feature_matching:
-  detectors:
-    - sift
-    - orb
-  sift:
-    ratio_threshold: 0.75      # Lowe's ratio test threshold
-    epipolar_threshold: 2.0    # Epipolar constraint threshold (pixels)
-  orb:
-    ratio_threshold: 0.75
-    epipolar_threshold: 2.0
-```
-
-### 6. Depth Recovery Parameters
-```yaml
-depth_recovery:
-  detector: sift       # Which detector's matches to use
-  min_depth: 0.5      # Minimum valid depth (meters)
-  max_depth: 15.0     # Maximum valid depth (meters)
-  visualize: true     # Generate visualizations
-```
-
-## Usage
 
 ## Usage
 
 ### Preparation
 
-1. **Download EuRoC Dataset**
+#### 1.Firstly, we should create workspace and clone the code:
+```bash
+cd ~/
+mkdir -p aae5306_ws/src
+cd aae5306_ws/src
+git clone https://github.com/Printeger/AAE5306_Lab.git
+cd .. # in main folder of ws 
+catkin_make -DPYTHON_EXECUTABLE=/usr/bin/python3 #using default python3 
+
+source devel/setup.bash 
+```
+#### Download EuRoC Dataset
 ```bash
 # Create data directory
-mkdir -p data/euroc/rosbags
-
-# Download calibration file
-cd data/euroc
-wget http://robotics.ethz.ch/~asl-datasets/ijrr_euroc_mav_dataset/machine_hall/MH_01_easy/MH_01_easy.yaml
+cd aae5306_ws/
+mkdir -p data/rosbags
 
 # Download ROS bag file
-cd rosbags
+cd data/rosbags
 wget http://robotics.ethz.ch/~asl-datasets/ijrr_euroc_mav_dataset/machine_hall/MH_01_easy/MH_01_easy.bag
+#after download, you should see a .bag file in the folder
+ls
+#expected output:
+# MH_01_easy.bag
 ```
 
-2. **Configure Parameters**
+#### Configure Parameters
 Edit the `config.yaml` file to adjust parameters as needed.
-
+```
+#Sample Modification 
+processing:
+    detector:
+      type: orb  # dector type: orb/sift / harris / fast are all supported
+      publish_rate: 10.0
+      visualize: true
+    matching:
+      ratio_threshold: 0.75
+      epipolar_threshold: 2.0
+      max_delay: 0.1
+      visualize: true
+    depth:
+      min_depth: 0.5
+      max_depth: 15.0
+      max_delay: 0.1
+      visualize: true
+```
 ### Execution Steps
 
-#### Task 1: Extract Camera Calibration
-
-**Input:**
-- `data/euroc/MH_01_easy.yaml` - EuRoC calibration file
-
-**Output:**
-- `config/euroc_calibration.yaml` - OpenCV-compatible calibration file
-- Terminal displays calibration parameter summary
-
-**Run:**
+#### Run the code
 ```bash
-python "1. extract_calibration.py"
+#run with different task
+roslaunch aae5306_stereo_vision feature_detection.launch 
+# roslaunch aae5306_stereo_vision feature_matching.launch
+# roslaunch aae5306_stereo_vision depth_recovery.launch 
+# roslaunch aae5306_stereo_vision stereo_visualization.launch 
 ```
 
-**Configuration:**
-- No additional configuration needed, just ensure input file path is correct
 
----
+#### Play ROSBAG
+```bash 
+# Open a new terminal
+cd ~/aae5306_ws/data/rosbag
+rosbag play MH_01_easy .bag -r 0.5 --clock
+```
+
+<!-- ---
 
 #### Task 2: Extract Stereo Image Pairs
 
@@ -366,9 +338,9 @@ python "4. feature_matching.py"
 
 # Task 5: Depth recovery
 python "5. depth_recovery.py"
-```
+``` -->
 
-## Configuration File Details
+<!-- ## Configuration File Details
 
 ### Input/Output Summary
 
@@ -378,7 +350,7 @@ python "5. depth_recovery.py"
 | 2. Image Extraction | `MH_01_easy.bag` | `extracted_images/` | `skip_frames`, `max_pairs`, `topics` |
 | 3. Feature Detection | Image pairs | Visualizations, statistics | `detectors`, `test_image_index` |
 | 4. Feature Matching | Image pairs | Match data, visualizations | `ratio_threshold`, `epipolar_threshold` |
-| 5. Depth Recovery | Match data, calibration | Point cloud, depth map | `min_depth`, `max_depth`, `detector` |
+| 5. Depth Recovery | Match data, calibration | Point cloud, depth map | `min_depth`, `max_depth`, `detector` | -->
 
 ### Key Parameters
 

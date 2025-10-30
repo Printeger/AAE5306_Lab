@@ -53,33 +53,17 @@ class FeatureMatcher:
                 rospy.logwarn("To enable SIFT: pip3 install opencv-contrib-python")
                 self.detector_type = 'orb'
                 self.detector = cv2.ORB_create(nfeatures=2000)
-                FLANN_INDEX_LSH = 6
-                index_params = dict(
-                    algorithm=FLANN_INDEX_LSH,
-                    table_number=6,
-                    key_size=12,
-                    multi_probe_level=1
-                )
-                search_params = dict(checks=50)
-                self.matcher = cv2.FlannBasedMatcher(index_params, search_params)
+                # Use BFMatcher with Hamming norm for ORB descriptors
+                self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
             else:
                 self.detector = cv2.SIFT_create()
-                FLANN_INDEX_KDTREE = 1
-                index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-                search_params = dict(checks=50)
-                self.matcher = cv2.FlannBasedMatcher(index_params, search_params)
-            
+                # Use BFMatcher with L2 norm for SIFT descriptors
+                self.matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+        
         elif self.detector_type == 'orb':
             self.detector = cv2.ORB_create(nfeatures=2000)
-            FLANN_INDEX_LSH = 6
-            index_params = dict(
-                algorithm=FLANN_INDEX_LSH,
-                table_number=6,
-                key_size=12,
-                multi_probe_level=1
-            )
-            search_params = dict(checks=50)
-            self.matcher = cv2.FlannBasedMatcher(index_params, search_params)
+            # Use BFMatcher with Hamming norm for ORB descriptors
+            self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
         else:
             raise ValueError(f"Unknown detector type: {self.detector_type}")
     
@@ -100,40 +84,27 @@ class FeatureMatcher:
         kp_right, desc_right = self.detector.detectAndCompute(img_right, None)
         detection_time = (time.time() - start_time) * 1000
         
-        if desc_left is None or desc_right is None or len(desc_left) < 2 or len(desc_right) < 2:
+        if desc_left is None or desc_right is None or len(desc_left) == 0 or len(desc_right) == 0:
             return self._empty_result()
         
-        # Match features
+        # Match features using BFMatcher with crossCheck
         start_time = time.time()
-        matches = self.matcher.knnMatch(desc_left, desc_right, k=2)
+        matches = self.matcher.match(desc_left, desc_right)
         matching_time = (time.time() - start_time) * 1000
         
-        # Apply ratio test
-        start_time = time.time()
-        good_matches = []
-        for match_pair in matches:
-            if len(match_pair) == 2:
-                m, n = match_pair
-                if m.distance < self.ratio_threshold * n.distance:
-                    good_matches.append(m)
+        # Sort by distance for stable ordering (optional)
+        matches = sorted(matches, key=lambda m: m.distance)
         
-        # Apply epipolar constraint
-        filtered_matches = []
-        for match in good_matches:
-            pt_left = kp_left[match.queryIdx].pt
-            pt_right = kp_right[match.trainIdx].pt
-            
-            if abs(pt_left[1] - pt_right[1]) < self.epipolar_threshold:
-                filtered_matches.append(match)
-        
-        filtering_time = (time.time() - start_time) * 1000
+        # No epipolar constraint: final matches are the cross-checked matches
+        filtered_matches = matches
+        filtering_time = 0.0
         
         return {
             'keypoints_left': kp_left,
             'keypoints_right': kp_right,
             'matches': filtered_matches,
             'num_initial': len(matches),
-            'num_ratio_filtered': len(good_matches),
+            'num_ratio_filtered': len(matches),
             'num_final': len(filtered_matches),
             'detection_time': detection_time,
             'matching_time': matching_time,
@@ -277,8 +248,8 @@ class FeatureMatchingNode:
         # Statistics
         text1 = f"Detector: {self.detector_type.upper()}"
         text2 = f"Initial Matches: {result['num_initial']}"
-        text3 = f"Ratio Test: {result['num_ratio_filtered']}"
-        text4 = f"Epipolar Filter: {result['num_final']}"
+        text3 = f"Cross-Check: {result['num_ratio_filtered']}"
+        text4 = f"Final Matches: {result['num_final']}"
         total_time = result['detection_time'] + result['matching_time'] + result['filtering_time']
         text5 = f"Time: {total_time:.1f}ms"
         

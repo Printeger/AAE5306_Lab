@@ -102,33 +102,17 @@ class FeatureMatcher:
                 rospy.logwarn("To enable SIFT: pip3 install opencv-contrib-python")
                 self.detector_type = 'orb'
                 self.detector = cv2.ORB_create(nfeatures=2000)
-                FLANN_INDEX_LSH = 6
-                index_params = dict(
-                    algorithm=FLANN_INDEX_LSH,
-                    table_number=6,
-                    key_size=12,
-                    multi_probe_level=1
-                )
-                search_params = dict(checks=50)
-                self.matcher = cv2.FlannBasedMatcher(index_params, search_params)
+                # Use BFMatcher with Hamming norm for ORB descriptors
+                self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
             else:
                 self.detector = cv2.SIFT_create()
-                FLANN_INDEX_KDTREE = 1
-                index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-                search_params = dict(checks=50)
-                self.matcher = cv2.FlannBasedMatcher(index_params, search_params)
-            
+                # Use BFMatcher with L2 norm for SIFT descriptors
+                self.matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+        
         elif self.detector_type == 'orb':
             self.detector = cv2.ORB_create(nfeatures=2000)
-            FLANN_INDEX_LSH = 6
-            index_params = dict(
-                algorithm=FLANN_INDEX_LSH,
-                table_number=6,
-                key_size=12,
-                multi_probe_level=1
-            )
-            search_params = dict(checks=50)
-            self.matcher = cv2.FlannBasedMatcher(index_params, search_params)
+            # Use BFMatcher with Hamming norm for ORB descriptors
+            self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
         else:
             raise ValueError(f"Unknown detector type: {self.detector_type}")
     
@@ -149,40 +133,45 @@ class FeatureMatcher:
         kp_right, desc_right = self.detector.detectAndCompute(img_right, None)
         detection_time = (time.time() - start_time) * 1000
         
-        if desc_left is None or desc_right is None or len(desc_left) < 2 or len(desc_right) < 2:
+        if desc_left is None or desc_right is None or len(desc_left) == 0 or len(desc_right) == 0:
             return self._empty_result()
         
-        # Match features
+        # Match features using BFMatcher with crossCheck
         start_time = time.time()
-        matches = self.matcher.knnMatch(desc_left, desc_right, k=2)
+        matches = self.matcher.match(desc_left, desc_right)
         matching_time = (time.time() - start_time) * 1000
         
-        # Apply ratio test
-        start_time = time.time()
-        good_matches = []
-        for match_pair in matches:
-            if len(match_pair) == 2:
-                m, n = match_pair
-                if m.distance < self.ratio_threshold * n.distance:
-                    good_matches.append(m)
+        # Sort by distance for stable ordering (optional)
+        matches = sorted(matches, key=lambda m: m.distance)
         
-        # Apply epipolar constraint
-        filtered_matches = []
-        for match in good_matches:
-            pt_left = kp_left[match.queryIdx].pt
-            pt_right = kp_right[match.trainIdx].pt
-            
-            if abs(pt_left[1] - pt_right[1]) < self.epipolar_threshold:
-                filtered_matches.append(match)
-        
-        filtering_time = (time.time() - start_time) * 1000
+        # Geometric verification with RANSAC (Fundamental Matrix)
+        if len(matches) >= 8:
+            start_time = time.time()
+            pts_left = np.float32([kp_left[m.queryIdx].pt for m in matches])
+            pts_right = np.float32([kp_right[m.trainIdx].pt for m in matches])
+            F, mask = cv2.findFundamentalMat(pts_left, pts_right, cv2.FM_RANSAC, 3.0, 0.99)
+            if mask is not None:
+                inlier_mask = mask.ravel().astype(bool)
+                filtered_matches = [m for m, keep in zip(matches, inlier_mask) if keep]
+                outlier_matches = [m for m, keep in zip(matches, inlier_mask) if not keep]
+            else:
+                filtered_matches = []
+                outlier_matches = matches
+            filtering_time = (time.time() - start_time) * 1000
+        else:
+            # Not enough matches for RANSAC; keep cross-checked matches
+            filtered_matches = matches
+            outlier_matches = []
+            filtering_time = 0.0
         
         return {
             'keypoints_left': kp_left,
             'keypoints_right': kp_right,
             'matches': filtered_matches,
+            'matches_all': matches,
+            'outlier_matches': outlier_matches,
             'num_initial': len(matches),
-            'num_ratio_filtered': len(good_matches),
+            'num_ratio_filtered': len(matches),
             'num_final': len(filtered_matches),
             'detection_time': detection_time,
             'matching_time': matching_time,
@@ -195,6 +184,8 @@ class FeatureMatcher:
             'keypoints_left': [],
             'keypoints_right': [],
             'matches': [],
+            'matches_all': [],
+            'outlier_matches': [],
             'num_initial': 0,
             'num_ratio_filtered': 0,
             'num_final': 0,
@@ -359,30 +350,55 @@ class FeatureMatchingNode:
         self.stats_pub.publish(stats)
     
     def publish_visualization(self, header, img_left, img_right, result):
-        """Publish visualization with matched features."""
-        # Draw matches
-        match_img = cv2.drawMatches(
-            img_left, result['keypoints_left'],
-            img_right, result['keypoints_right'],
-            result['matches'], None,
-            matchColor=(0, 255, 0),
-            singlePointColor=(255, 0, 0),
-            flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
-        )
-        
+        """Publish visualization with matched features using distinct colors for left/right."""
+        # Ensure color images
+        left_bgr = cv2.cvtColor(img_left, cv2.COLOR_GRAY2BGR) if img_left.ndim == 2 else img_left.copy()
+        right_bgr = cv2.cvtColor(img_right, cv2.COLOR_GRAY2BGR) if img_right.ndim == 2 else img_right.copy()
+
+        h = max(left_bgr.shape[0], right_bgr.shape[0])
+        w_left = left_bgr.shape[1]
+        w_right = right_bgr.shape[1]
+
+        # Create side-by-side canvas
+        match_img = np.zeros((h, w_left + w_right, 3), dtype=np.uint8)
+        match_img[:left_bgr.shape[0], :w_left] = left_bgr
+        match_img[:right_bgr.shape[0], w_left:w_left + w_right] = right_bgr
+
+        # Colors (BGR)
+        color_left = (255, 0, 0)   # Blue for left keypoints (good)
+        color_right = (0, 255, 0)  # Green for right keypoints (good)
+        color_line = (0, 255, 255) # Yellow for connecting lines (good)
+        color_bad = (0, 0, 255)    # Red for bad (outlier) matches
+
+        # Draw bad (outlier) matches in red
+        for m in result.get('outlier_matches', []):
+            ptL = tuple(np.round(result['keypoints_left'][m.queryIdx].pt).astype(int))
+            ptR = tuple(np.round(result['keypoints_right'][m.trainIdx].pt).astype(int))
+            cv2.circle(match_img, ptL, 3, color_bad, -1, lineType=cv2.LINE_AA)
+            cv2.circle(match_img, (ptR[0] + w_left, ptR[1]), 3, color_bad, -1, lineType=cv2.LINE_AA)
+            cv2.line(match_img, ptL, (ptR[0] + w_left, ptR[1]), color_bad, 1, lineType=cv2.LINE_AA)
+
+        # Draw inlier matched keypoints and lines
+        for m in result['matches']:
+            ptL = tuple(np.round(result['keypoints_left'][m.queryIdx].pt).astype(int))
+            ptR = tuple(np.round(result['keypoints_right'][m.trainIdx].pt).astype(int))
+            cv2.circle(match_img, ptL, 3, color_left, -1, lineType=cv2.LINE_AA)
+            cv2.circle(match_img, (ptR[0] + w_left, ptR[1]), 3, color_right, -1, lineType=cv2.LINE_AA)
+            cv2.line(match_img, ptL, (ptR[0] + w_left, ptR[1]), color_line, 1, lineType=cv2.LINE_AA)
+
         # Add detailed text overlays with background
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.6
         thickness = 2
-        
+
         # Statistics
         text1 = f"Detector: {self.detector_type.upper()}"
         text2 = f"Initial Matches: {result['num_initial']}"
-        text3 = f"Ratio Test: {result['num_ratio_filtered']}"
-        text4 = f"Epipolar Filter: {result['num_final']}"
+        text3 = f"Cross-Check: {result['num_ratio_filtered']}"
+        text4 = f"RANSAC Inliers: {result['num_final']}"
         total_time = result['detection_time'] + result['matching_time'] + result['filtering_time']
         text5 = f"Time: {total_time:.1f}ms"
-        
+
         # Draw text with black background for better visibility
         y_offset = 25
         for i, text in enumerate([text1, text2, text3, text4, text5]):
@@ -390,7 +406,7 @@ class FeatureMatchingNode:
             (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
             cv2.rectangle(match_img, (5, y - text_h - 5), (15 + text_w, y + 5), (0, 0, 0), -1)
             cv2.putText(match_img, text, (10, y), font, font_scale, (0, 255, 0), thickness)
-        
+
         # Convert to ROS Image
         try:
             viz_msg = self.bridge.cv2_to_imgmsg(match_img, encoding='bgr8')

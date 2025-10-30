@@ -100,7 +100,7 @@ aae5306_stereo_vision:
             - 1.0
   processing:
     detector:
-      type: orb
+      type: orb # sift / orb for detection & matching # harris / fast for detection
       publish_rate: 10.0
       visualize: true
     matching:
@@ -111,6 +111,8 @@ aae5306_stereo_vision:
     depth:
       min_depth: 0.5
       max_depth: 15.0
+      min_ray_depth: 3.0   
+      max_ray_depth: 12.0  
       max_delay: 0.1
       visualize: true
   topics:

@@ -18,6 +18,8 @@ from sensor_msgs.msg import Image, PointCloud2, PointField
 from std_msgs.msg import Header
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from aae5306_stereo_vision.msg import DepthStats
+from visualization_msgs.msg import Marker
+from geometry_msgs.msg import Point
 
 # Minimal inline config loader to keep the project simple
 import threading
@@ -327,6 +329,7 @@ class DepthRecoveryNode:
         self.stats_pub = rospy.Publisher(
             self.depth_stats_topic, DepthStats, queue_size=10
         )
+        self.ray_pub = rospy.Publisher("/stereo_vision/rays", Marker, queue_size=1)
         
         # Synchronized subscribers
         self.left_sub = Subscriber(self.left_topic, Image)
@@ -382,6 +385,8 @@ class DepthRecoveryNode:
         depth_max = depth_cfg.get('max_depth', 15.0)
         self.min_depth = float(depth_min)
         self.max_depth = float(depth_max)
+        self.min_ray_depth = float(depth_cfg.get('min_ray_depth', 2.0))
+        self.max_ray_depth = float(depth_cfg.get('max_ray_depth', 10.0))
 
         delay_source = depth_cfg.get('max_delay', matching_cfg.get('max_delay', 0.1))
         self.max_delay = float(delay_source)
@@ -507,67 +512,6 @@ class DepthRecoveryNode:
             'filtering_time': 0.0
         }
 
-    def stereo_callback(self, left_msg, right_msg):
-        """Process synchronized stereo pair."""
-        try:
-            start_time = time.time()
-            
-            # Convert ROS Images to OpenCV
-            img_left = self.bridge.imgmsg_to_cv2(left_msg, desired_encoding='mono8')
-            img_right = self.bridge.imgmsg_to_cv2(right_msg, desired_encoding='mono8')
-            
-            # Detect and match features using BF + crossCheck + RANSAC
-            match_res = self.detect_and_match(img_left, img_right)
-            if match_res['num_final'] < 10:
-                if match_res['num_initial'] == 0:
-                    rospy.logwarn_throttle(5.0, "Insufficient features detected")
-                else:
-                    rospy.logwarn_throttle(5.0, f"Too few matches: {match_res['num_final']}")
-                return
-            
-            kp_left = match_res['keypoints_left']
-            kp_right = match_res['keypoints_right']
-            matches = match_res['matches']
-
-            pts_left = np.float32([kp_left[m.queryIdx].pt for m in matches])
-            pts_right = np.float32([kp_right[m.trainIdx].pt for m in matches])
-            
-            # Compute depth
-            depth_res = self.depth_recovery.compute_depth(
-                pts_left, pts_right,
-                min_depth=self.min_depth,
-                max_depth=self.max_depth
-            )
-            
-            computation_time = (time.time() - start_time) * 1000
-            
-            # Publish point cloud
-            if depth_res['points_3d'].shape[0] > 0:
-                self.publish_pointcloud(left_msg.header, depth_res['points_3d'])
-            
-            # Publish depth visualization
-            if self.visualize and self.depth_viz_pub.get_num_connections() > 0:
-                self.publish_depth_visualization(
-                    left_msg.header, img_left, pts_left, depth_res['depths']
-                )
-            
-            # Publish statistics
-            self.publish_stats(left_msg.header, depth_res['stats'], computation_time)
-            
-            rospy.loginfo_throttle(
-                2.0,
-                f"Generated {depth_res['points_3d'].shape[0]} 3D points, "
-                f"mean depth: {depth_res['stats']['mean_depth']:.2f}m "
-                f"({computation_time:.1f}ms)"
-            )
-            
-        except CvBridgeError as e:
-            rospy.logerr(f"CV Bridge error: {e}")
-        except Exception as e:
-            rospy.logerr(f"Error processing stereo pair: {e}")
-            import traceback
-            rospy.logerr(traceback.format_exc())
-    
     def publish_pointcloud(self, header, points_3d):
         """Publish 3D point cloud."""
         # Create PointCloud2 message
@@ -582,6 +526,34 @@ class DepthRecoveryNode:
         pc_msg.header.frame_id = self.pointcloud_frame
 
         self.pointcloud_pub.publish(pc_msg)
+    
+    def publish_rays(self, header, points_3d):
+        """Publish lines from camera origin到点，筛选指定距离区间（yaml可设）。"""
+        pts = np.asarray(points_3d)
+        if pts.shape[0] == 0 or pts.shape[1] != 3:
+            return
+        keep = (pts[:,2] >= self.min_ray_depth) & (pts[:,2] <= self.max_ray_depth)
+        pts = pts[keep]
+        if pts.shape[0] == 0:
+            return
+        marker = Marker()
+        marker.header = header
+        marker.ns = 'ray'
+        marker.id = 0
+        marker.type = Marker.LINE_LIST
+        marker.action = Marker.ADD
+        marker.scale.x = 0.01
+        marker.color.r = 1.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+        marker.color.a = 1.0
+        marker.pose.orientation.w = 1.0
+        marker.lifetime = rospy.Duration(0)
+        # Each line: [origin, pt_i]
+        for pt in pts:
+            marker.points.append(Point(0,0,0))
+            marker.points.append(Point(pt[0], pt[1], pt[2]))
+        self.ray_pub.publish(marker)
     
     def publish_depth_visualization(self, header, image, points, depths):
         """Publish depth visualization."""
@@ -631,6 +603,57 @@ class DepthRecoveryNode:
         msg.computation_time = computation_time
         
         self.stats_pub.publish(msg)
+    
+    def stereo_callback(self, left_msg, right_msg):
+        """Process synchronized stereo pair."""
+        try:
+            start_time = time.time()
+            # Convert ROS Images to OpenCV
+            img_left = self.bridge.imgmsg_to_cv2(left_msg, desired_encoding='mono8')
+            img_right = self.bridge.imgmsg_to_cv2(right_msg, desired_encoding='mono8')
+            # Detect and match features using BF + crossCheck + RANSAC
+            match_res = self.detect_and_match(img_left, img_right)
+            if match_res['num_final'] < 10:
+                if match_res['num_initial'] == 0:
+                    rospy.logwarn_throttle(5.0, "Insufficient features detected")
+                else:
+                    rospy.logwarn_throttle(5.0, f"Too few matches: {match_res['num_final']}")
+                return
+            kp_left = match_res['keypoints_left']
+            kp_right = match_res['keypoints_right']
+            matches = match_res['matches']
+            pts_left = np.float32([kp_left[m.queryIdx].pt for m in matches])
+            pts_right = np.float32([kp_right[m.trainIdx].pt for m in matches])
+            # Compute depth
+            depth_res = self.depth_recovery.compute_depth(
+                pts_left, pts_right,
+                min_depth=self.min_depth,
+                max_depth=self.max_depth
+            )
+            computation_time = (time.time() - start_time) * 1000
+            # Publish point cloud
+            if depth_res['points_3d'].shape[0] > 0:
+                self.publish_pointcloud(left_msg.header, depth_res['points_3d'])
+                self.publish_rays(left_msg.header, depth_res['points_3d'])
+            # Publish depth visualization
+            if self.visualize and self.depth_viz_pub.get_num_connections() > 0:
+                self.publish_depth_visualization(
+                    left_msg.header, img_left, pts_left, depth_res['depths']
+                )
+            # Publish statistics
+            self.publish_stats(left_msg.header, depth_res['stats'], computation_time)
+            rospy.loginfo_throttle(
+                2.0,
+                f"Generated {depth_res['points_3d'].shape[0]} 3D points, "
+                f"mean depth: {depth_res['stats']['mean_depth']:.2f}m "
+                f"({computation_time:.1f}ms)"
+            )
+        except CvBridgeError as e:
+            rospy.logerr(f"CV Bridge error: {e}")
+        except Exception as e:
+            rospy.logerr(f"Error processing stereo pair: {e}")
+            import traceback
+            rospy.logerr(traceback.format_exc())
     
     def run(self):
         """Keep the node running."""

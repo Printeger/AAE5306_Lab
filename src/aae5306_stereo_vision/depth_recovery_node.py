@@ -296,7 +296,7 @@ class DepthRecoveryNode:
         self.depth_recovery = DepthRecovery(self.fx, self.fy, self.cx, self.cy, self.baseline)
         self.bridge = CvBridge()
         
-        # Initialize feature matcher
+        # Initialize feature detector
         if self.detector_type == 'sift':
             if not check_sift_available():
                 rospy.logwarn("SIFT not available in OpenCV. Falling back to ORB.")
@@ -310,34 +310,12 @@ class DepthRecoveryNode:
         else:
             raise ValueError(f"Unknown detector type: {self.detector_type}")
         
-        # Initialize FLANN matcher
-        if self.detector_type == 'sift':
-            if check_sift_available():
-                FLANN_INDEX_KDTREE = 1
-                index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-                search_params = dict(checks=50)
-                self.matcher = cv2.FlannBasedMatcher(index_params, search_params)
-            else:
-                # ORB fallback
-                FLANN_INDEX_LSH = 6
-                index_params = dict(
-                    algorithm=FLANN_INDEX_LSH,
-                    table_number=6,
-                    key_size=12,
-                    multi_probe_level=1
-                )
-                search_params = dict(checks=50)
-                self.matcher = cv2.FlannBasedMatcher(index_params, search_params)
+        # Initialize BF matcher (crossCheck) per descriptor type
+        if self.detector_type == 'sift' and check_sift_available():
+            self.matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
         else:
-            FLANN_INDEX_LSH = 6
-            index_params = dict(
-                algorithm=FLANN_INDEX_LSH,
-                table_number=6,
-                key_size=12,
-                multi_probe_level=1
-            )
-            search_params = dict(checks=50)
-            self.matcher = cv2.FlannBasedMatcher(index_params, search_params)
+            # ORB and other binary descriptors
+            self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
         
         # Publishers
         self.pointcloud_pub = rospy.Publisher(
@@ -365,7 +343,7 @@ class DepthRecoveryNode:
         rospy.loginfo(f"  Detector type: {self.detector_type}")
         rospy.loginfo(f"  Cameras: {self.left_camera_label} (left) | {self.right_camera_label} (right)")
         rospy.loginfo(f"  Topics: {self.left_topic} / {self.right_topic}")
-        rospy.loginfo(f"  Matching thresholds: ratio={self.ratio_threshold}, epipolar={self.epipolar_threshold}")
+        rospy.loginfo("  Matching: BF cross-check + RANSAC (F matrix)")
         rospy.loginfo(f"  Depth range: {self.min_depth}m - {self.max_depth}m")
         rospy.loginfo(f"  Baseline: {self.baseline:.6f} m")
         rospy.loginfo(f"  Visualization: {self.visualize}")
@@ -451,6 +429,84 @@ class DepthRecoveryNode:
         self.pointcloud_frame = str(frames_cfg.get('pointcloud', self.left_camera_label))
 
     
+    def detect_and_match(self, img_left, img_right):
+        """
+        Detect features and match between stereo pair.
+        
+        Args:
+            img_left (np.array): Left image (grayscale)
+            img_right (np.array): Right image (grayscale)
+            
+        Returns:
+            dict: Matching results with statistics and keypoints
+        """
+        # Detect features
+        start_time = time.time()
+        kp_left, desc_left = self.detector.detectAndCompute(img_left, None)
+        kp_right, desc_right = self.detector.detectAndCompute(img_right, None)
+        detection_time = (time.time() - start_time) * 1000
+        
+        if desc_left is None or desc_right is None or len(desc_left) == 0 or len(desc_right) == 0:
+            return self._empty_result()
+        
+        # Match features using BFMatcher with crossCheck
+        start_time = time.time()
+        matches = self.matcher.match(desc_left, desc_right)
+        matching_time = (time.time() - start_time) * 1000
+        
+        # Sort by distance for stable ordering (optional)
+        matches = sorted(matches, key=lambda m: m.distance)
+        
+        # Geometric verification with RANSAC (Fundamental Matrix)
+        if len(matches) >= 8:
+            start_time = time.time()
+            pts_left = np.float32([kp_left[m.queryIdx].pt for m in matches])
+            pts_right = np.float32([kp_right[m.trainIdx].pt for m in matches])
+            F, mask = cv2.findFundamentalMat(pts_left, pts_right, cv2.FM_RANSAC, 3.0, 0.99)
+            if mask is not None:
+                inlier_mask = mask.ravel().astype(bool)
+                filtered_matches = [m for m, keep in zip(matches, inlier_mask) if keep]
+                outlier_matches = [m for m, keep in zip(matches, inlier_mask) if not keep]
+            else:
+                filtered_matches = []
+                outlier_matches = matches
+            filtering_time = (time.time() - start_time) * 1000
+        else:
+            # Not enough matches for RANSAC; keep cross-checked matches
+            filtered_matches = matches
+            outlier_matches = []
+            filtering_time = 0.0
+        
+        return {
+            'keypoints_left': kp_left,
+            'keypoints_right': kp_right,
+            'matches': filtered_matches,
+            'matches_all': matches,
+            'outlier_matches': outlier_matches,
+            'num_initial': len(matches),
+            'num_ratio_filtered': len(matches),
+            'num_final': len(filtered_matches),
+            'detection_time': detection_time,
+            'matching_time': matching_time,
+            'filtering_time': filtering_time
+        }
+
+    def _empty_result(self):
+        """Return an empty detect_and_match result structure."""
+        return {
+            'keypoints_left': [],
+            'keypoints_right': [],
+            'matches': [],
+            'matches_all': [],
+            'outlier_matches': [],
+            'num_initial': 0,
+            'num_ratio_filtered': 0,
+            'num_final': 0,
+            'detection_time': 0.0,
+            'matching_time': 0.0,
+            'filtering_time': 0.0
+        }
+
     def stereo_callback(self, left_msg, right_msg):
         """Process synchronized stereo pair."""
         try:
@@ -460,45 +516,24 @@ class DepthRecoveryNode:
             img_left = self.bridge.imgmsg_to_cv2(left_msg, desired_encoding='mono8')
             img_right = self.bridge.imgmsg_to_cv2(right_msg, desired_encoding='mono8')
             
-            # Detect and match features
-            kp_left, desc_left = self.detector.detectAndCompute(img_left, None)
-            kp_right, desc_right = self.detector.detectAndCompute(img_right, None)
-            
-            if desc_left is None or desc_right is None or len(desc_left) < 2 or len(desc_right) < 2:
-                rospy.logwarn_throttle(5.0, "Insufficient features detected")
+            # Detect and match features using BF + crossCheck + RANSAC
+            match_res = self.detect_and_match(img_left, img_right)
+            if match_res['num_final'] < 10:
+                if match_res['num_initial'] == 0:
+                    rospy.logwarn_throttle(5.0, "Insufficient features detected")
+                else:
+                    rospy.logwarn_throttle(5.0, f"Too few matches: {match_res['num_final']}")
                 return
             
-            # Match features
-            matches = self.matcher.knnMatch(desc_left, desc_right, k=2)
-            
-            # Apply ratio test
-            good_matches = []
-            for match_pair in matches:
-                if len(match_pair) == 2:
-                    m, n = match_pair
-                    if m.distance < self.ratio_threshold * n.distance:
-                        good_matches.append(m)
-            
-            # Apply epipolar constraint and extract points
-            pts_left = []
-            pts_right = []
-            for match in good_matches:
-                pt_left = kp_left[match.queryIdx].pt
-                pt_right = kp_right[match.trainIdx].pt
-                
-                if abs(pt_left[1] - pt_right[1]) < self.epipolar_threshold:
-                    pts_left.append(pt_left)
-                    pts_right.append(pt_right)
-            
-            if len(pts_left) < 10:
-                rospy.logwarn_throttle(5.0, f"Too few matches: {len(pts_left)}")
-                return
-            
-            pts_left = np.array(pts_left, dtype=np.float32)
-            pts_right = np.array(pts_right, dtype=np.float32)
+            kp_left = match_res['keypoints_left']
+            kp_right = match_res['keypoints_right']
+            matches = match_res['matches']
+
+            pts_left = np.float32([kp_left[m.queryIdx].pt for m in matches])
+            pts_right = np.float32([kp_right[m.trainIdx].pt for m in matches])
             
             # Compute depth
-            result = self.depth_recovery.compute_depth(
+            depth_res = self.depth_recovery.compute_depth(
                 pts_left, pts_right,
                 min_depth=self.min_depth,
                 max_depth=self.max_depth
@@ -507,22 +542,22 @@ class DepthRecoveryNode:
             computation_time = (time.time() - start_time) * 1000
             
             # Publish point cloud
-            if result['points_3d'].shape[0] > 0:
-                self.publish_pointcloud(left_msg.header, result['points_3d'])
+            if depth_res['points_3d'].shape[0] > 0:
+                self.publish_pointcloud(left_msg.header, depth_res['points_3d'])
             
             # Publish depth visualization
             if self.visualize and self.depth_viz_pub.get_num_connections() > 0:
                 self.publish_depth_visualization(
-                    left_msg.header, img_left, pts_left, result['depths']
+                    left_msg.header, img_left, pts_left, depth_res['depths']
                 )
             
             # Publish statistics
-            self.publish_stats(left_msg.header, result['stats'], computation_time)
+            self.publish_stats(left_msg.header, depth_res['stats'], computation_time)
             
             rospy.loginfo_throttle(
                 2.0,
-                f"Generated {result['points_3d'].shape[0]} 3D points, "
-                f"mean depth: {result['stats']['mean_depth']:.2f}m "
+                f"Generated {depth_res['points_3d'].shape[0]} 3D points, "
+                f"mean depth: {depth_res['stats']['mean_depth']:.2f}m "
                 f"({computation_time:.1f}ms)"
             )
             

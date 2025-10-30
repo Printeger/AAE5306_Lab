@@ -95,9 +95,22 @@ class FeatureMatcher:
         # Sort by distance for stable ordering (optional)
         matches = sorted(matches, key=lambda m: m.distance)
         
-        # No epipolar constraint: final matches are the cross-checked matches
-        filtered_matches = matches
-        filtering_time = 0.0
+        # Geometric verification with RANSAC (Fundamental Matrix)
+        if len(matches) >= 8:
+            start_time = time.time()
+            pts_left = np.float32([kp_left[m.queryIdx].pt for m in matches])
+            pts_right = np.float32([kp_right[m.trainIdx].pt for m in matches])
+            F, mask = cv2.findFundamentalMat(pts_left, pts_right, cv2.FM_RANSAC, 3.0, 0.99)
+            if mask is not None:
+                inlier_mask = mask.ravel().astype(bool)
+                filtered_matches = [m for m, keep in zip(matches, inlier_mask) if keep]
+            else:
+                filtered_matches = []
+            filtering_time = (time.time() - start_time) * 1000
+        else:
+            # Not enough matches for RANSAC; keep cross-checked matches
+            filtered_matches = matches
+            filtering_time = 0.0
         
         return {
             'keypoints_left': kp_left,
@@ -249,7 +262,7 @@ class FeatureMatchingNode:
         text1 = f"Detector: {self.detector_type.upper()}"
         text2 = f"Initial Matches: {result['num_initial']}"
         text3 = f"Cross-Check: {result['num_ratio_filtered']}"
-        text4 = f"Final Matches: {result['num_final']}"
+        text4 = f"RANSAC Inliers: {result['num_final']}"
         total_time = result['detection_time'] + result['matching_time'] + result['filtering_time']
         text5 = f"Time: {total_time:.1f}ms"
         

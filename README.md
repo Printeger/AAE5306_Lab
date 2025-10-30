@@ -77,22 +77,22 @@ paths:
 
 ### Preparation
 
-#### 1.Firstly, we should create workspace and clone the code:
+#### 1. First, create the workspace and clone the repository:
 ```bash
 cd ~/
 mkdir -p aae5306_ws/src
 cd aae5306_ws/src
 git clone https://github.com/Printeger/AAE5306_Lab.git
-cd .. # in main folder of ws 
-catkin_make -DPYTHON_EXECUTABLE=/usr/bin/python3 #using default python3 
+cd ..  # go to workspace root
+catkin_make -DPYTHON_EXECUTABLE=/usr/bin/python3  # using default python3
 
-source devel/setup.bash 
+source devel/setup.bash
 ```
 #### Download EuRoC Dataset
 ```bash
 # Create data directory
 cd aae5306_ws/
-mkdir -p data/rosbags
+mkdir -p data/rosbag
 
 # Download ROS bag file
 cd data/rosbags
@@ -105,23 +105,23 @@ ls
 
 #### Configure Parameters
 Edit the `config.yaml` file to adjust parameters as needed.
-```
-#Sample Modification 
+```yaml
+# Sample modification
 processing:
-    detector:
-      type: orb  # dector type: orb/sift / harris / fast are all supported
-      publish_rate: 10.0
-      visualize: true
-    matching:
-      ratio_threshold: 0.75
-      epipolar_threshold: 2.0
-      max_delay: 0.1
-      visualize: true
-    depth:
-      min_depth: 0.5
-      max_depth: 15.0
-      max_delay: 0.1
-      visualize: true
+  detector:
+    type: orb  # detector type: sift/orb/harris/fast are supported
+    publish_rate: 10.0
+    visualize: true
+  matching:
+    ratio_threshold: 0.75
+    epipolar_threshold: 2.0
+    max_delay: 0.1
+    visualize: true
+  depth:
+    min_depth: 0.5
+    max_depth: 15.0
+    max_delay: 0.1
+    visualize: true
 ```
 ### Execution Steps
 

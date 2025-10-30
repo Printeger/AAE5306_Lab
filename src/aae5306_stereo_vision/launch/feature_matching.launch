@@ -8,49 +8,13 @@
 -->
 
 <launch>
-  <!-- Arguments -->
-  <arg name="detector_type" default="orb" doc="Feature detector: sift, orb (use orb if SIFT not available)"/>
-  <arg name="ratio_threshold" default="0.75" doc="Lowe's ratio test threshold"/>
-  <arg name="epipolar_threshold" default="2.0" doc="Epipolar constraint threshold (pixels)"/>
-  <arg name="cam0_topic" default="/cam0/image_raw" doc="Left camera topic"/>
-  <arg name="cam1_topic" default="/cam1/image_raw" doc="Right camera topic"/>
-  <arg name="visualize" default="true" doc="Enable visualization"/>
+  <arg name="config_file" default="$(find aae5306_stereo_vision)/config/stereo_params.yaml"/>
 
-  <!-- 1. Feature Detection - Left Camera -->
-  <node name="feature_detection_cam0" pkg="aae5306_stereo_vision" type="feature_detection_node.py" output="screen">
-    <param name="detector_type" value="$(arg detector_type)"/>
-    <param name="input_topic" value="$(arg cam0_topic)"/>
-    <param name="visualize" value="$(arg visualize)"/>
-    <param name="publish_rate" value="10.0"/>
-    <remap from="~features_image" to="/stereo_vision/cam0/features_image"/>
-    <remap from="~feature_stats" to="/stereo_vision/cam0/feature_stats"/>
-  </node>
+  <rosparam command="load" file="$(arg config_file)"/>
 
-  <!-- 2. Feature Detection - Right Camera -->
-  <node name="feature_detection_cam1" pkg="aae5306_stereo_vision" type="feature_detection_node.py" output="screen">
-    <param name="detector_type" value="$(arg detector_type)"/>
-    <param name="input_topic" value="$(arg cam1_topic)"/>
-    <param name="visualize" value="$(arg visualize)"/>
-    <param name="publish_rate" value="10.0"/>
-    <remap from="~features_image" to="/stereo_vision/cam1/features_image"/>
-    <remap from="~feature_stats" to="/stereo_vision/cam1/feature_stats"/>
-  </node>
-
-  <!-- 3. Feature Matching -->
-  <node name="feature_matching" pkg="aae5306_stereo_vision" type="feature_matching_node.py" output="screen">
-    <param name="detector_type" value="$(arg detector_type)"/>
-    <param name="ratio_threshold" value="$(arg ratio_threshold)"/>
-    <param name="epipolar_threshold" value="$(arg epipolar_threshold)"/>
-    <param name="left_topic" value="$(arg cam0_topic)"/>
-    <param name="right_topic" value="$(arg cam1_topic)"/>
-    <param name="visualize" value="$(arg visualize)"/>
-    <param name="max_delay" value="0.1"/>
-    <remap from="~matches_image" to="/stereo_vision/matches_image"/>
-    <remap from="~match_stats" to="/stereo_vision/match_stats"/>
-  </node>
-
-  <!-- Visualization - RViz -->
-  <node if="$(arg visualize)" name="rviz" pkg="rviz" type="rviz" 
-        args="-d $(find aae5306_stereo_vision)/rviz/stereo_vision.rviz" output="screen"/>
+  <node name="feature_detection_cam0" pkg="aae5306_stereo_vision" type="feature_detection_node.py" output="screen"/>
+  <node name="feature_detection_cam1" pkg="aae5306_stereo_vision" type="feature_detection_node.py" output="screen"/>
+  <node name="feature_matching" pkg="aae5306_stereo_vision" type="feature_matching_node.py" output="screen"/>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find aae5306_stereo_vision)/rviz/stereo_vision.rviz" output="screen"/>
 
 </launch>

@@ -301,7 +301,7 @@ class FeatureDetectionNode:
             keypoints,
             None,
             color=(0, 255, 0),
-            flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS
+            flags=cv2.DRAW_MATCHES_FLAGS_DEFAULT
         )
         
         # Add text overlays with background

@@ -18,6 +18,55 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Header
 from aae5306_stereo_vision.msg import FeatureStats
 
+# Minimal inline config loader to keep the project simple
+import threading
+from typing import Any, Dict, Iterable, Optional
+
+DEFAULT_NAMESPACE = '/aae5306_stereo_vision'
+_CONFIG_CACHE: Dict[str, Dict[str, Any]] = {}
+_CACHE_LOCK = threading.Lock()
+
+
+class ConfigError(RuntimeError):
+    pass
+
+
+def _load_from_param_server(namespace: str) -> Dict[str, Any]:
+    if not rospy.has_param(namespace):
+        raise ConfigError(
+            f"Configuration namespace '{namespace}' not found on the parameter server"
+        )
+    data = rospy.get_param(namespace)
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"Expected configuration under '{namespace}' to be a dictionary"
+        )
+    return data
+
+
+def get_pipeline_config(namespace: str = DEFAULT_NAMESPACE) -> Dict[str, Any]:
+    with _CACHE_LOCK:
+        if namespace not in _CONFIG_CACHE:
+            _CONFIG_CACHE[namespace] = _load_from_param_server(namespace)
+        config = _CONFIG_CACHE[namespace]
+    return dict(config)
+
+
+def get_node_block(
+    config: Dict[str, Any], node_name: str, expected_type: Optional[str] = None
+) -> Dict[str, Any]:
+    nodes = config.get('nodes', {})
+    if node_name not in nodes:
+        raise ConfigError(f"No configuration found for node '{node_name}'")
+    node_block = nodes[node_name]
+    if expected_type:
+        node_type = node_block.get('type', expected_type)
+        if node_type != expected_type:
+            raise ConfigError(
+                f"Node '{node_name}' expects type '{expected_type}', found '{node_type}'"
+            )
+    return node_block
+
 
 def check_sift_available():
     """Check if SIFT is available in OpenCV."""
@@ -106,47 +155,99 @@ class FeatureDetectionNode:
     def __init__(self):
         """Initialize the feature detection node."""
         rospy.init_node('feature_detection_node', anonymous=False)
-        
-        # Parameters
-        self.detector_type = rospy.get_param('~detector_type', 'sift')
-        self.input_topic = rospy.get_param('~input_topic', '/cam0/image_raw')
-        self.visualize = rospy.get_param('~visualize', True)
-        self.publish_rate = rospy.get_param('~publish_rate', 10.0)
-        
+
+        try:
+            self._initialize_from_config()
+        except ConfigError as exc:
+            rospy.logfatal(f"Configuration error: {exc}")
+            raise
+
         # Initialize detector
         self.detector = FeatureDetector(self.detector_type)
         self.bridge = CvBridge()
-        
+
         # Publishers
         self.feature_viz_pub = rospy.Publisher(
-            '~features_image', Image, queue_size=5
+            self.features_image_topic, Image, queue_size=5
         )
         self.stats_pub = rospy.Publisher(
-            '~feature_stats', FeatureStats, queue_size=10
+            self.stats_topic, FeatureStats, queue_size=10
         )
-        
+
         # Subscriber
         self.image_sub = rospy.Subscriber(
             self.input_topic, Image, self.image_callback, queue_size=5
         )
-        
+
         # State
-        self.last_publish_time = rospy.Time.now()
-        self.min_publish_interval = rospy.Duration(1.0 / self.publish_rate)
-        
-        rospy.loginfo(f"Feature Detection Node initialized")
+        self.last_publish_time = rospy.Time(0)
+        if self.publish_rate and self.publish_rate > 0:
+            self.min_publish_interval = rospy.Duration(1.0 / self.publish_rate)
+        else:
+            self.min_publish_interval = None
+
+        rospy.loginfo(f"Feature Detection Node '{self.node_name}' initialized")
+        rospy.loginfo(f"  Camera: {self.camera_label} (input: {self.input_topic})")
         rospy.loginfo(f"  Detector type: {self.detector_type}")
-        rospy.loginfo(f"  Input topic: {self.input_topic}")
-        rospy.loginfo(f"  Visualize: {self.visualize}")
-        rospy.loginfo(f"  Publish rate: {self.publish_rate} Hz")
+        rospy.loginfo(f"  Publish rate limit: {self.publish_rate} Hz")
+        rospy.loginfo(f"  Visualization: {self.visualize}")
+        rospy.loginfo(f"  Output image topic: {self.features_image_topic}")
+        rospy.loginfo(f"  Stats topic: {self.stats_topic}")
+        if self.config_version is not None:
+            rospy.loginfo(f"  Config version: {self.config_version}")
     
+    def _initialize_from_config(self):
+        """Load node-specific configuration from the shared YAML file."""
+        self.node_name = rospy.get_name().split('/')[-1]
+        self.config = get_pipeline_config()
+        self.config_version = self.config.get('config_version')
+
+        node_block = get_node_block(
+            self.config, self.node_name, expected_type='feature_detection'
+        )
+
+        self.camera_label = node_block.get('camera')
+        if not self.camera_label:
+            raise config_loader.ConfigError(
+                f"Node '{self.node_name}' missing 'camera' mapping in configuration"
+            )
+
+        detector_cfg = self.config.get('processing', {}).get('detector', {})
+        detector_type = detector_cfg.get('type', 'orb')
+        self.detector_type = str(detector_type)
+
+        publish_rate = detector_cfg.get('publish_rate', 10.0)
+        self.publish_rate = float(publish_rate) if publish_rate is not None else 0.0
+
+        visualize_default = detector_cfg.get('visualize', True)
+        self.visualize = bool(node_block.get('visualize', visualize_default))
+
+        topics_cfg = self.config.get('topics', {})
+        inputs_cfg = topics_cfg.get('inputs', {})
+        if self.camera_label not in inputs_cfg:
+            raise config_loader.ConfigError(
+                f"Input topic for camera '{self.camera_label}' not defined"
+            )
+        self.input_topic = inputs_cfg[self.camera_label]
+
+        outputs_cfg = topics_cfg.get('outputs', {}).get('feature_detection', {})
+        camera_outputs = outputs_cfg.get(self.camera_label, {})
+        self.features_image_topic = camera_outputs.get('features_image')
+        self.stats_topic = camera_outputs.get('feature_stats')
+
+        if not self.features_image_topic or not self.stats_topic:
+            raise config_loader.ConfigError(
+                f"Outputs for feature detection camera '{self.camera_label}' are incomplete"
+            )
+
     def image_callback(self, msg):
         """Process incoming image and detect features."""
         # Rate limiting
-        current_time = rospy.Time.now()
-        if (current_time - self.last_publish_time) < self.min_publish_interval:
-            return
-        self.last_publish_time = current_time
+        if self.min_publish_interval is not None:
+            current_time = rospy.Time.now()
+            if (current_time - self.last_publish_time) < self.min_publish_interval:
+                return
+            self.last_publish_time = current_time
         
         try:
             # Convert ROS Image to OpenCV
@@ -164,8 +265,10 @@ class FeatureDetectionNode:
             
             rospy.loginfo_throttle(
                 2.0, 
-                f"Detected {len(keypoints)} features in {comp_time:.1f}ms"
+                f"[{self.camera_label}] Detected {len(keypoints)} features in {comp_time:.1f}ms"
             )
+            if self.min_publish_interval is None:
+                self.last_publish_time = rospy.Time.now()
             
         except CvBridgeError as e:
             rospy.logerr(f"CV Bridge error: {e}")

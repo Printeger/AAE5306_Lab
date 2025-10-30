@@ -19,6 +19,55 @@ from std_msgs.msg import Header
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from aae5306_stereo_vision.msg import MatchStats
 
+# Minimal inline config loader to keep the project simple
+import threading
+from typing import Any, Dict, Optional
+
+DEFAULT_NAMESPACE = '/aae5306_stereo_vision'
+_CONFIG_CACHE: Dict[str, Dict[str, Any]] = {}
+_CACHE_LOCK = threading.Lock()
+
+
+class ConfigError(RuntimeError):
+    pass
+
+
+def _load_from_param_server(namespace: str) -> Dict[str, Any]:
+    if not rospy.has_param(namespace):
+        raise ConfigError(
+            f"Configuration namespace '{namespace}' not found on the parameter server"
+        )
+    data = rospy.get_param(namespace)
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"Expected configuration under '{namespace}' to be a dictionary"
+        )
+    return data
+
+
+def get_pipeline_config(namespace: str = DEFAULT_NAMESPACE) -> Dict[str, Any]:
+    with _CACHE_LOCK:
+        if namespace not in _CONFIG_CACHE:
+            _CONFIG_CACHE[namespace] = _load_from_param_server(namespace)
+        config = _CONFIG_CACHE[namespace]
+    return dict(config)
+
+
+def get_node_block(
+    config: Dict[str, Any], node_name: str, expected_type: Optional[str] = None
+) -> Dict[str, Any]:
+    nodes = config.get('nodes', {})
+    if node_name not in nodes:
+        raise ConfigError(f"No configuration found for node '{node_name}'")
+    node_block = nodes[node_name]
+    if expected_type:
+        node_type = node_block.get('type', expected_type)
+        if node_type != expected_type:
+            raise ConfigError(
+                f"Node '{node_name}' expects type '{expected_type}', found '{node_type}'"
+            )
+    return node_block
+
 
 def check_sift_available():
     """Check if SIFT is available in OpenCV."""
@@ -161,16 +210,13 @@ class FeatureMatchingNode:
     def __init__(self):
         """Initialize the feature matching node."""
         rospy.init_node('feature_matching_node', anonymous=False)
-        
-        # Parameters
-        self.detector_type = rospy.get_param('~detector_type', 'sift')
-        self.ratio_threshold = rospy.get_param('~ratio_threshold', 0.75)
-        self.epipolar_threshold = rospy.get_param('~epipolar_threshold', 2.0)
-        self.left_topic = rospy.get_param('~left_topic', '/cam0/image_raw')
-        self.right_topic = rospy.get_param('~right_topic', '/cam1/image_raw')
-        self.visualize = rospy.get_param('~visualize', True)
-        self.max_delay = rospy.get_param('~max_delay', 0.1)
-        
+
+        try:
+            self._initialize_from_config()
+        except ConfigError as exc:
+            rospy.logfatal(f"Configuration error: {exc}")
+            raise
+
         # Initialize matcher
         self.matcher = FeatureMatcher(
             self.detector_type,
@@ -178,33 +224,88 @@ class FeatureMatchingNode:
             self.epipolar_threshold
         )
         self.bridge = CvBridge()
-        
+
         # Publishers
         self.match_viz_pub = rospy.Publisher(
-            '~matches_image', Image, queue_size=5
+            self.matches_image_topic, Image, queue_size=5
         )
         self.stats_pub = rospy.Publisher(
-            '~match_stats', MatchStats, queue_size=10
+            self.match_stats_topic, MatchStats, queue_size=10
         )
-        
+
         # Synchronized subscribers
         self.left_sub = Subscriber(self.left_topic, Image)
         self.right_sub = Subscriber(self.right_topic, Image)
-        
+
         self.sync = ApproximateTimeSynchronizer(
             [self.left_sub, self.right_sub],
             queue_size=10,
             slop=self.max_delay
         )
         self.sync.registerCallback(self.stereo_callback)
-        
+
         rospy.loginfo("Feature Matching Node initialized")
         rospy.loginfo(f"  Detector type: {self.detector_type}")
         rospy.loginfo(f"  Ratio threshold: {self.ratio_threshold}")
         rospy.loginfo(f"  Epipolar threshold: {self.epipolar_threshold}")
-        rospy.loginfo(f"  Left topic: {self.left_topic}")
-        rospy.loginfo(f"  Right topic: {self.right_topic}")
+        rospy.loginfo(f"  Left camera/topic: {self.left_camera_label} ({self.left_topic})")
+        rospy.loginfo(f"  Right camera/topic: {self.right_camera_label} ({self.right_topic})")
+        rospy.loginfo(f"  Visualization: {self.visualize}")
+        if self.config_version is not None:
+            rospy.loginfo(f"  Config version: {self.config_version}")
     
+    def _initialize_from_config(self):
+        """Load matching configuration from the shared YAML file."""
+        self.node_name = rospy.get_name().split('/')[-1]
+        self.config = get_pipeline_config()
+        self.config_version = self.config.get('config_version')
+
+        node_block = get_node_block(
+            self.config, self.node_name, expected_type='feature_matching'
+        )
+
+        self.left_camera_label = node_block.get('left_camera')
+        self.right_camera_label = node_block.get('right_camera')
+        if not self.left_camera_label or not self.right_camera_label:
+            raise config_loader.ConfigError(
+                f"Node '{self.node_name}' must define 'left_camera' and 'right_camera'"
+            )
+
+        detector_cfg = self.config.get('processing', {}).get('detector', {})
+        detector_type = detector_cfg.get('type', 'orb')
+        self.detector_type = str(detector_type)
+
+        matching_cfg = self.config.get('processing', {}).get('matching', {})
+        ratio = matching_cfg.get('ratio_threshold', 0.75)
+        epipolar = matching_cfg.get('epipolar_threshold', 2.0)
+        delay = matching_cfg.get('max_delay', 0.1)
+
+        self.ratio_threshold = float(ratio)
+        self.epipolar_threshold = float(epipolar)
+        self.max_delay = float(delay)
+
+        visualize_default = matching_cfg.get('visualize', True)
+        self.visualize = bool(node_block.get('visualize', visualize_default))
+
+        topics_cfg = self.config.get('topics', {})
+        inputs_cfg = topics_cfg.get('inputs', {})
+        for camera in (self.left_camera_label, self.right_camera_label):
+            if camera not in inputs_cfg:
+                raise config_loader.ConfigError(
+                    f"Input topic for camera '{camera}' not defined"
+                )
+        self.left_topic = inputs_cfg[self.left_camera_label]
+        self.right_topic = inputs_cfg[self.right_camera_label]
+
+        outputs_cfg = topics_cfg.get('outputs', {}).get('feature_matching', {})
+        self.matches_image_topic = outputs_cfg.get('matches_image')
+        self.match_stats_topic = outputs_cfg.get('match_stats')
+
+        if not self.matches_image_topic or not self.match_stats_topic:
+            raise config_loader.ConfigError(
+                "Feature matching output topics are not fully defined"
+            )
+
     def stereo_callback(self, left_msg, right_msg):
         """Process synchronized stereo pair."""
         try:

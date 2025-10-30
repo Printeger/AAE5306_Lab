@@ -15,6 +15,19 @@ find_package(catkin REQUIRED COMPONENTS
   message_generation
 )
 
+## Ensure Python modules are available in devel space (simple copy)
+file(MAKE_DIRECTORY ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION}/aae5306_stereo_vision)
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/__init__.py
+  ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION}/aae5306_stereo_vision/__init__.py
+  COPYONLY
+)
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/config_loader.py
+  ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION}/aae5306_stereo_vision/config_loader.py
+  COPYONLY
+)
+
 ## Generate messages
 add_message_files(
   FILES
@@ -66,4 +79,11 @@ install(DIRECTORY config/
 ## Install rviz config
 install(DIRECTORY rviz/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/rviz
+)
+
+## Install Python package modules
+install(FILES
+  __init__.py
+  config_loader.py
+  DESTINATION ${CATKIN_PACKAGE_PYTHON_DESTINATION}/aae5306_stereo_vision
 )

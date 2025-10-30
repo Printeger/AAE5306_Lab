@@ -18,6 +18,141 @@ from sensor_msgs.msg import Image, PointCloud2, PointField
 from std_msgs.msg import Header
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from aae5306_stereo_vision.msg import DepthStats
+
+# Minimal inline config loader to keep the project simple
+import threading
+from typing import Any, Dict, Iterable, Optional
+
+DEFAULT_NAMESPACE = '/aae5306_stereo_vision'
+_CONFIG_CACHE: Dict[str, Dict[str, Any]] = {}
+_CACHE_LOCK = threading.Lock()
+
+
+class ConfigError(RuntimeError):
+    pass
+
+
+def _reshape_matrix(data: Iterable[float]) -> np.ndarray:
+    values = list(float(x) for x in data)
+    if len(values) != 16:
+        raise ConfigError(
+            f'Expected 16 values for a 4x4 transform, received {len(values)}'
+        )
+    return np.array(values, dtype=float).reshape((4, 4))
+
+
+def _parse_calibration(calibration: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    cameras_map: Dict[str, Dict[str, Any]] = {}
+    for entry in calibration.get('cameras', []):
+        camera_info = entry.get('camera', {})
+        label = camera_info.get('label')
+        if not label:
+            continue
+        intrinsics_data = camera_info.get('intrinsics', {}).get('data', [])
+        intrinsics = {}
+        if len(intrinsics_data) >= 4:
+            intrinsics = {
+                'fx': float(intrinsics_data[0]),
+                'fy': float(intrinsics_data[1]),
+                'cx': float(intrinsics_data[2]),
+                'cy': float(intrinsics_data[3]),
+            }
+        transform_data = entry.get('T_B_C', {}).get('data', [])
+        transform = None
+        translation = None
+        if len(transform_data) == 16:
+            transform = _reshape_matrix(transform_data)
+            translation = transform[:3, 3].copy()
+        cameras_map[label] = {
+            'intrinsics': intrinsics,
+            'translation': translation,
+        }
+    return cameras_map
+
+
+def _compute_baseline(
+    cameras_map: Dict[str, Dict[str, Any]],
+    explicit_baseline: Optional[float],
+) -> Optional[float]:
+    if explicit_baseline is not None:
+        return float(explicit_baseline)
+    if len(cameras_map) < 2:
+        return None
+    labels = list(cameras_map.keys())
+    origin_label = labels[0]
+    origin_translation = cameras_map[origin_label].get('translation')
+    if origin_translation is None:
+        return None
+    for label in labels[1:]:
+        translation = cameras_map[label].get('translation')
+        if translation is None:
+            continue
+        delta = origin_translation - translation
+        return float(np.linalg.norm(delta))
+    return None
+
+
+def _normalize(raw: Dict[str, Any]) -> Dict[str, Any]:
+    calibration = raw.get('calibration', {})
+    cameras_map = _parse_calibration(calibration)
+    stereo_cfg = dict(raw.get('stereo', {}) or {})
+    baseline = _compute_baseline(cameras_map, stereo_cfg.get('baseline'))
+    if baseline is not None:
+        stereo_cfg['baseline'] = baseline
+    return {
+        'config_version': raw.get('config_version'),
+        'cameras': cameras_map,
+        'processing': raw.get('processing', {}),
+        'topics': raw.get('topics', {}),
+        'nodes': raw.get('nodes', {}),
+        'frames': raw.get('frames', {}),
+        'stereo': stereo_cfg,
+    }
+
+
+def _load_from_param_server(namespace: str) -> Dict[str, Any]:
+    if not rospy.has_param(namespace):
+        raise ConfigError(
+            f"Configuration namespace '{namespace}' not found on the parameter server"
+        )
+    data = rospy.get_param(namespace)
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"Expected configuration under '{namespace}' to be a dictionary"
+        )
+    return data
+
+
+def get_pipeline_config(namespace: str = DEFAULT_NAMESPACE) -> Dict[str, Any]:
+    with _CACHE_LOCK:
+        if namespace not in _CONFIG_CACHE:
+            raw = _load_from_param_server(namespace)
+            _CONFIG_CACHE[namespace] = _normalize(raw)
+        config = _CONFIG_CACHE[namespace]
+    return dict(config)
+
+
+def get_node_block(
+    config: Dict[str, Any], node_name: str, expected_type: Optional[str] = None
+) -> Dict[str, Any]:
+    nodes = config.get('nodes', {})
+    if node_name not in nodes:
+        raise ConfigError(f"No configuration found for node '{node_name}'")
+    node_block = nodes[node_name]
+    if expected_type:
+        node_type = node_block.get('type', expected_type)
+        if node_type != expected_type:
+            raise ConfigError(
+                f"Node '{node_name}' expects type '{expected_type}', found '{node_type}'"
+            )
+    return node_block
+
+
+def get_camera(config: Dict[str, Any], label: str) -> Dict[str, Any]:
+    cameras = config.get('cameras', {})
+    if label not in cameras:
+        raise ConfigError(f"Camera '{label}' not defined in configuration")
+    return cameras[label]
 import sensor_msgs.point_cloud2 as pc2
 
 
@@ -151,25 +286,12 @@ class DepthRecoveryNode:
         """Initialize the depth recovery node."""
         rospy.init_node('depth_recovery_node', anonymous=False)
         
-        # Parameters - Camera calibration
-        self.fx = rospy.get_param('~fx', 458.654)
-        self.fy = rospy.get_param('~fy', 457.296)
-        self.cx = rospy.get_param('~cx', 367.215)
-        self.cy = rospy.get_param('~cy', 248.375)
-        self.baseline = rospy.get_param('~baseline', 0.110074)
-        
-        # Parameters - Processing
-        self.detector_type = rospy.get_param('~detector_type', 'sift')
-        self.ratio_threshold = rospy.get_param('~ratio_threshold', 0.75)
-        self.epipolar_threshold = rospy.get_param('~epipolar_threshold', 2.0)
-        self.min_depth = rospy.get_param('~min_depth', 0.5)
-        self.max_depth = rospy.get_param('~max_depth', 15.0)
-        
-        # Parameters - Topics
-        self.left_topic = rospy.get_param('~left_topic', '/cam0/image_raw')
-        self.right_topic = rospy.get_param('~right_topic', '/cam1/image_raw')
-        self.max_delay = rospy.get_param('~max_delay', 0.1)
-        
+        try:
+            self._initialize_from_config()
+        except ConfigError as exc:
+            rospy.logfatal(f"Configuration error: {exc}")
+            raise
+
         # Initialize components
         self.depth_recovery = DepthRecovery(self.fx, self.fy, self.cx, self.cy, self.baseline)
         self.bridge = CvBridge()
@@ -219,13 +341,13 @@ class DepthRecoveryNode:
         
         # Publishers
         self.pointcloud_pub = rospy.Publisher(
-            '~pointcloud', PointCloud2, queue_size=5
+            self.pointcloud_topic, PointCloud2, queue_size=5
         )
         self.depth_viz_pub = rospy.Publisher(
-            '~depth_image', Image, queue_size=5
+            self.depth_image_topic, Image, queue_size=5
         )
         self.stats_pub = rospy.Publisher(
-            '~depth_stats', DepthStats, queue_size=10
+            self.depth_stats_topic, DepthStats, queue_size=10
         )
         
         # Synchronized subscribers
@@ -240,6 +362,94 @@ class DepthRecoveryNode:
         self.sync.registerCallback(self.stereo_callback)
         
         rospy.loginfo("Depth Recovery Node initialized")
+        rospy.loginfo(f"  Detector type: {self.detector_type}")
+        rospy.loginfo(f"  Cameras: {self.left_camera_label} (left) | {self.right_camera_label} (right)")
+        rospy.loginfo(f"  Topics: {self.left_topic} / {self.right_topic}")
+        rospy.loginfo(f"  Matching thresholds: ratio={self.ratio_threshold}, epipolar={self.epipolar_threshold}")
+        rospy.loginfo(f"  Depth range: {self.min_depth}m - {self.max_depth}m")
+        rospy.loginfo(f"  Baseline: {self.baseline:.6f} m")
+        rospy.loginfo(f"  Visualization: {self.visualize}")
+        if self.config_version is not None:
+            rospy.loginfo(f"  Config version: {self.config_version}")
+
+    def _initialize_from_config(self):
+        """Load depth recovery configuration from the shared YAML file."""
+        self.node_name = rospy.get_name().split('/')[-1]
+        self.config = config_loader.get_pipeline_config()
+        self.config_version = self.config.get('config_version')
+
+        node_block = get_node_block(
+            self.config, self.node_name, expected_type='depth_recovery'
+        )
+
+        self.left_camera_label = node_block.get('left_camera')
+        self.right_camera_label = node_block.get('right_camera')
+        if not self.left_camera_label or not self.right_camera_label:
+            raise config_loader.ConfigError(
+                f"Node '{self.node_name}' must define 'left_camera' and 'right_camera'"
+            )
+
+        detector_cfg = self.config.get('processing', {}).get('detector', {})
+        self.detector_type = str(detector_cfg.get('type', 'orb'))
+
+        matching_cfg = self.config.get('processing', {}).get('matching', {})
+        depth_cfg = self.config.get('processing', {}).get('depth', {})
+
+        ratio = matching_cfg.get('ratio_threshold', 0.75)
+        epipolar = matching_cfg.get('epipolar_threshold', 2.0)
+        self.ratio_threshold = float(ratio)
+        self.epipolar_threshold = float(epipolar)
+
+        depth_min = depth_cfg.get('min_depth', 0.5)
+        depth_max = depth_cfg.get('max_depth', 15.0)
+        self.min_depth = float(depth_min)
+        self.max_depth = float(depth_max)
+
+        delay_source = depth_cfg.get('max_delay', matching_cfg.get('max_delay', 0.1))
+        self.max_delay = float(delay_source)
+
+        visualize_default = depth_cfg.get('visualize', True)
+        self.visualize = bool(node_block.get('visualize', visualize_default))
+
+        topics_cfg = self.config.get('topics', {})
+        inputs_cfg = topics_cfg.get('inputs', {})
+        for camera in (self.left_camera_label, self.right_camera_label):
+            if camera not in inputs_cfg:
+                raise config_loader.ConfigError(
+                    f"Input topic for camera '{camera}' not defined"
+                )
+        self.left_topic = inputs_cfg[self.left_camera_label]
+        self.right_topic = inputs_cfg[self.right_camera_label]
+
+        outputs_cfg = topics_cfg.get('outputs', {}).get('depth_recovery', {})
+        self.pointcloud_topic = outputs_cfg.get('pointcloud')
+        self.depth_image_topic = outputs_cfg.get('depth_image')
+        self.depth_stats_topic = outputs_cfg.get('depth_stats')
+        if not all([self.pointcloud_topic, self.depth_image_topic, self.depth_stats_topic]):
+            raise config_loader.ConfigError(
+                "Depth recovery output topics are not fully defined"
+            )
+
+        camera = get_camera(self.config, self.left_camera_label)
+        intrinsics = camera.get('intrinsics', {})
+        try:
+            self.fx = float(intrinsics['fx'])
+            self.fy = float(intrinsics['fy'])
+            self.cx = float(intrinsics['cx'])
+            self.cy = float(intrinsics['cy'])
+        except KeyError as exc:
+            raise config_loader.ConfigError(
+                f"Missing intrinsic '{exc.args[0]}' for camera '{self.left_camera_label}'"
+            )
+
+        baseline = self.config.get('stereo', {}).get('baseline')
+        if baseline is None:
+            raise config_loader.ConfigError('Stereo baseline is not defined')
+        self.baseline = float(baseline)
+
+        frames_cfg = self.config.get('frames', {})
+        self.pointcloud_frame = str(frames_cfg.get('pointcloud', self.left_camera_label))
+
     
     def stereo_callback(self, left_msg, right_msg):
         """Process synchronized stereo pair."""
@@ -301,7 +511,7 @@ class DepthRecoveryNode:
                 self.publish_pointcloud(left_msg.header, result['points_3d'])
             
             # Publish depth visualization
-            if self.depth_viz_pub.get_num_connections() > 0:
+            if self.visualize and self.depth_viz_pub.get_num_connections() > 0:
                 self.publish_depth_visualization(
                     left_msg.header, img_left, pts_left, result['depths']
                 )
@@ -334,8 +544,8 @@ class DepthRecoveryNode:
         
         # Create point cloud message
         pc_msg = pc2.create_cloud(header, fields, points_3d)
-        pc_msg.header.frame_id = 'cam0'  # Use left camera frame
-        
+        pc_msg.header.frame_id = self.pointcloud_frame
+
         self.pointcloud_pub.publish(pc_msg)
     
     def publish_depth_visualization(self, header, image, points, depths):

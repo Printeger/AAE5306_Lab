@@ -1,0 +1,155 @@
+# AAE5306 Stereo Vision Parameter Configuration
+# Unified configuration file for feature detection, matching, and depth recovery.
+
+aae5306_stereo_vision:
+  config_version: 1
+  description: "AAE5306 Stereo Vision Pipeline configuration"
+  calibration:
+    label: "VISensor - EuRoC - original_calibration"
+    id: 412eab8e4058621f7036b5e765dfe812
+    cameras:
+      - camera:
+          label: cam0
+          id: 54812562fa109c40fe90b29a59dd7798
+          line-delay-nanoseconds: 0
+          image_height: 480
+          image_width: 752
+          type: pinhole
+          intrinsics:
+            cols: 1
+            rows: 4
+            data:
+              - 458.6548807207614
+              - 457.2966964634893
+              - 367.2158039615726
+              - 248.37534060980727
+          distortion:
+            type: radial-tangential
+            parameters:
+              cols: 1
+              rows: 4
+              data:
+                - -0.28340811217029355
+                - 0.07395907389290132
+                - 0.00019359502856909603
+                - 1.7618711454538528e-05
+        T_B_C:
+          cols: 4
+          rows: 4
+          data:
+            - 0.0148655429818
+            - -0.999880929698
+            - 0.00414029679422
+            - -0.0216401454975
+            - 0.999557249008
+            - 0.0149672133247
+            - 0.025715529948
+            - -0.064676986768
+            - -0.0257744366974
+            - 0.00375618835797
+            - 0.999660727178
+            - 0.00981073058949
+            - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+      - camera:
+          label: cam1
+          id: 6c0e04039e1f4be8877dbee033b7061f
+          line-delay-nanoseconds: 0
+          image_height: 480
+          image_width: 752
+          type: pinhole
+          intrinsics:
+            cols: 1
+            rows: 4
+            data:
+              - 457.5871541991609
+              - 456.1340184798361
+              - 379.9994461938176
+              - 255.23760417810273
+          distortion:
+            type: radial-tangential
+            parameters:
+              cols: 1
+              rows: 4
+              data:
+                - -0.28368365047225296
+                - 0.07451284010017836
+                - -0.00010472839368678446
+                - -3.555907004063846e-05
+        T_B_C:
+          cols: 4
+          rows: 4
+          data:
+            - 0.0125552670891
+            - -0.999755099723
+            - 0.0182237714554
+            - -0.0198435579556
+            - 0.999598781151
+            - 0.0130119051815
+            - 0.0251588363115
+            - 0.0453689425024
+            - -0.0253898008918
+            - 0.0179005838253
+            - 0.999517347078
+            - 0.00786212447038
+            - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+  processing:
+    detector:
+      type: orb
+      publish_rate: 10.0
+      visualize: true
+    matching:
+      ratio_threshold: 0.75
+      epipolar_threshold: 2.0
+      max_delay: 0.1
+      visualize: true
+    depth:
+      min_depth: 0.5
+      max_depth: 15.0
+      max_delay: 0.1
+      visualize: true
+  topics:
+    inputs:
+      cam0: /cam0/image_raw
+      cam1: /cam1/image_raw
+    outputs:
+      feature_detection:
+        cam0:
+          features_image: /stereo_vision/cam0/features_image
+          feature_stats: /stereo_vision/cam0/feature_stats
+        cam1:
+          features_image: /stereo_vision/cam1/features_image
+          feature_stats: /stereo_vision/cam1/feature_stats
+      feature_matching:
+        matches_image: /stereo_vision/matches_image
+        match_stats: /stereo_vision/match_stats
+      depth_recovery:
+        pointcloud: /stereo_vision/pointcloud
+        depth_image: /stereo_vision/depth_image
+        depth_stats: /stereo_vision/depth_stats
+  frames:
+    cam0: cam0
+    cam1: cam1
+    pointcloud: cam0
+  nodes:
+    feature_detection_cam0:
+      type: feature_detection
+      camera: cam0
+    feature_detection_cam1:
+      type: feature_detection
+      camera: cam1
+    feature_matching:
+      type: feature_matching
+      left_camera: cam0
+      right_camera: cam1
+    depth_recovery:
+      type: depth_recovery
+      left_camera: cam0
+      right_camera: cam1
+  stereo:
+    baseline: 0.110074

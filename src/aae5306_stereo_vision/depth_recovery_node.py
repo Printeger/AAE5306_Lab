@@ -375,7 +375,7 @@ class DepthRecoveryNode:
     def _initialize_from_config(self):
         """Load depth recovery configuration from the shared YAML file."""
         self.node_name = rospy.get_name().split('/')[-1]
-        self.config = config_loader.get_pipeline_config()
+        self.config = get_pipeline_config()
         self.config_version = self.config.get('config_version')
 
         node_block = get_node_block(
@@ -385,7 +385,7 @@ class DepthRecoveryNode:
         self.left_camera_label = node_block.get('left_camera')
         self.right_camera_label = node_block.get('right_camera')
         if not self.left_camera_label or not self.right_camera_label:
-            raise config_loader.ConfigError(
+            raise ConfigError(
                 f"Node '{self.node_name}' must define 'left_camera' and 'right_camera'"
             )
 
@@ -415,7 +415,7 @@ class DepthRecoveryNode:
         inputs_cfg = topics_cfg.get('inputs', {})
         for camera in (self.left_camera_label, self.right_camera_label):
             if camera not in inputs_cfg:
-                raise config_loader.ConfigError(
+                raise ConfigError(
                     f"Input topic for camera '{camera}' not defined"
                 )
         self.left_topic = inputs_cfg[self.left_camera_label]
@@ -426,7 +426,7 @@ class DepthRecoveryNode:
         self.depth_image_topic = outputs_cfg.get('depth_image')
         self.depth_stats_topic = outputs_cfg.get('depth_stats')
         if not all([self.pointcloud_topic, self.depth_image_topic, self.depth_stats_topic]):
-            raise config_loader.ConfigError(
+            raise ConfigError(
                 "Depth recovery output topics are not fully defined"
             )
 
@@ -438,13 +438,13 @@ class DepthRecoveryNode:
             self.cx = float(intrinsics['cx'])
             self.cy = float(intrinsics['cy'])
         except KeyError as exc:
-            raise config_loader.ConfigError(
+            raise ConfigError(
                 f"Missing intrinsic '{exc.args[0]}' for camera '{self.left_camera_label}'"
             )
 
         baseline = self.config.get('stereo', {}).get('baseline')
         if baseline is None:
-            raise config_loader.ConfigError('Stereo baseline is not defined')
+            raise ConfigError('Stereo baseline is not defined')
         self.baseline = float(baseline)
 
         frames_cfg = self.config.get('frames', {})

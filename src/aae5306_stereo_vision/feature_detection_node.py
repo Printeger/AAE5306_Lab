@@ -208,7 +208,7 @@ class FeatureDetectionNode:
 
         self.camera_label = node_block.get('camera')
         if not self.camera_label:
-            raise config_loader.ConfigError(
+            raise ConfigError(
                 f"Node '{self.node_name}' missing 'camera' mapping in configuration"
             )
 
@@ -225,7 +225,7 @@ class FeatureDetectionNode:
         topics_cfg = self.config.get('topics', {})
         inputs_cfg = topics_cfg.get('inputs', {})
         if self.camera_label not in inputs_cfg:
-            raise config_loader.ConfigError(
+            raise ConfigError(
                 f"Input topic for camera '{self.camera_label}' not defined"
             )
         self.input_topic = inputs_cfg[self.camera_label]
@@ -236,7 +236,7 @@ class FeatureDetectionNode:
         self.stats_topic = camera_outputs.get('feature_stats')
 
         if not self.features_image_topic or not self.stats_topic:
-            raise config_loader.ConfigError(
+            raise ConfigError(
                 f"Outputs for feature detection camera '{self.camera_label}' are incomplete"
             )
 

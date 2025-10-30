@@ -267,7 +267,7 @@ class FeatureMatchingNode:
         self.left_camera_label = node_block.get('left_camera')
         self.right_camera_label = node_block.get('right_camera')
         if not self.left_camera_label or not self.right_camera_label:
-            raise config_loader.ConfigError(
+            raise ConfigError(
                 f"Node '{self.node_name}' must define 'left_camera' and 'right_camera'"
             )
 
@@ -291,7 +291,7 @@ class FeatureMatchingNode:
         inputs_cfg = topics_cfg.get('inputs', {})
         for camera in (self.left_camera_label, self.right_camera_label):
             if camera not in inputs_cfg:
-                raise config_loader.ConfigError(
+                raise ConfigError(
                     f"Input topic for camera '{camera}' not defined"
                 )
         self.left_topic = inputs_cfg[self.left_camera_label]
@@ -302,7 +302,7 @@ class FeatureMatchingNode:
         self.match_stats_topic = outputs_cfg.get('match_stats')
 
         if not self.matches_image_topic or not self.match_stats_topic:
-            raise config_loader.ConfigError(
+            raise ConfigError(
                 "Feature matching output topics are not fully defined"
             )
 

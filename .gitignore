@@ -3,3 +3,8 @@ doc/
 results/
 __pycache__/
 config/
+.catkin_tools/
+build/
+devel/
+*.pyc
+logs/

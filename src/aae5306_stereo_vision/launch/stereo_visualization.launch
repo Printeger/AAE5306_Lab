@@ -1,0 +1,33 @@
+<!-- 
+  Stereo Vision Visualization Launch File
+  
+  This launch file provides flexible visualization options for the stereo vision pipeline.
+  
+  Usage examples:
+    # Show only stereo matches
+    roslaunch aae5306_stereo_vision stereo_visualization.launch
+    
+    # Show all visualizations
+    roslaunch aae5306_stereo_vision stereo_visualization.launch show_features:=true show_rviz:=true
+    
+    # Custom topics
+    roslaunch aae5306_stereo_vision stereo_visualization.launch matches_topic:=/my_matches
+-->
+
+<launch>
+  <!-- Arguments for controlling what to visualize -->
+  <arg name="show_features" default="false" doc="Show individual camera feature detection"/>
+  <arg name="show_matches" default="true" doc="Show stereo feature matches"/>
+  <arg name="show_rviz" default="false" doc="Launch RViz for 3D point cloud visualization"/>
+  
+  <!-- Topic arguments -->
+  <arg name="cam0_features_topic" default="/stereo_vision/cam0/features_image"/>
+  <arg name="cam1_features_topic" default="/stereo_vision/cam1/features_image"/>
+  <arg name="matches_topic" default="/stereo_vision/matches_image"/>
+  <arg name="rviz_config" default="$(find aae5306_stereo_vision)/rviz/stereo_vision.rviz"/>
+
+  <!-- RViz for All Visualizations -->
+  <node name="rviz" pkg="rviz" type="rviz" 
+        args="-d $(arg rviz_config)" output="screen" respawn="false"/>
+
+</launch>

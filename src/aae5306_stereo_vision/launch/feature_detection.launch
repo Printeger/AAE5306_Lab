@@ -1,0 +1,41 @@
+<!-- 
+  Feature Detection Only Launch File
+  
+  This launch file starts only feature detection nodes for testing.
+  
+  Usage:
+    roslaunch aae5306_stereo_vision feature_detection.launch detector_type:=sift
+-->
+
+<launch>
+  <!-- Arguments -->
+  <arg name="detector_type" default="orb" doc="Feature detector: sift, orb, fast, harris (use orb if SIFT not available)"/>
+  <arg name="cam0_topic" default="/cam0/image_raw" doc="Left camera topic"/>
+  <arg name="cam1_topic" default="/cam1/image_raw" doc="Right camera topic"/>
+  <arg name="visualize" default="true" doc="Enable visualization"/>
+
+  <!-- Feature Detection - Left Camera -->
+  <node name="feature_detection_cam0" pkg="aae5306_stereo_vision" type="feature_detection_node.py" output="screen">
+    <param name="detector_type" value="$(arg detector_type)"/>
+    <param name="input_topic" value="$(arg cam0_topic)"/>
+    <param name="visualize" value="$(arg visualize)"/>
+    <param name="publish_rate" value="10.0"/>
+    <remap from="~features_image" to="/stereo_vision/cam0/features_image"/>
+    <remap from="~feature_stats" to="/stereo_vision/cam0/feature_stats"/>
+  </node>
+
+  <!-- Feature Detection - Right Camera -->
+  <node name="feature_detection_cam1" pkg="aae5306_stereo_vision" type="feature_detection_node.py" output="screen">
+    <param name="detector_type" value="$(arg detector_type)"/>
+    <param name="input_topic" value="$(arg cam1_topic)"/>
+    <param name="visualize" value="$(arg visualize)"/>
+    <param name="publish_rate" value="10.0"/>
+    <remap from="~features_image" to="/stereo_vision/cam1/features_image"/>
+    <remap from="~feature_stats" to="/stereo_vision/cam1/feature_stats"/>
+  </node>
+
+  <!-- Visualization - RViz -->
+  <node if="$(arg visualize)" name="rviz" pkg="rviz" type="rviz" 
+        args="-d $(find aae5306_stereo_vision)/rviz/stereo_vision.rviz" output="screen"/>
+
+</launch>

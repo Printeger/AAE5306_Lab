@@ -13,19 +13,14 @@
 -->
 
 <launch>
-  <!-- Arguments for controlling what to visualize -->
-  <arg name="show_features" default="false" doc="Show individual camera feature detection"/>
-  <arg name="show_matches" default="true" doc="Show stereo feature matches"/>
-  <arg name="show_rviz" default="false" doc="Launch RViz for 3D point cloud visualization"/>
-  
-  <!-- Topic arguments -->
-  <arg name="cam0_features_topic" default="/stereo_vision/cam0/features_image"/>
-  <arg name="cam1_features_topic" default="/stereo_vision/cam1/features_image"/>
-  <arg name="matches_topic" default="/stereo_vision/matches_image"/>
-  <arg name="rviz_config" default="$(find aae5306_stereo_vision)/rviz/stereo_vision.rviz"/>
+  <arg name="config_file" default="$(find aae5306_stereo_vision)/config/stereo_params.yaml"/>
 
-  <!-- RViz for All Visualizations -->
-  <node name="rviz" pkg="rviz" type="rviz" 
-        args="-d $(arg rviz_config)" output="screen" respawn="false"/>
+  <rosparam command="load" file="$(arg config_file)"/>
+
+  <node name="feature_detection_cam0" pkg="aae5306_stereo_vision" type="feature_detection_node.py" output="screen"/>
+  <node name="feature_detection_cam1" pkg="aae5306_stereo_vision" type="feature_detection_node.py" output="screen"/>
+  <node name="feature_matching" pkg="aae5306_stereo_vision" type="feature_matching_node.py" output="screen"/>
+  <node name="depth_recovery" pkg="aae5306_stereo_vision" type="depth_recovery_node.py" output="screen"/>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find aae5306_stereo_vision)/rviz/stereo_vision.rviz" output="screen"/>
 
 </launch>

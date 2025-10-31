@@ -59,6 +59,28 @@ pip install rospkg
 - ROS Noetic is required for Task 2 (image extraction)
 - Windows users can skip Task 2 and use pre-extracted images
 
+## Q&A
+1. Map Windows serial to WSL
+   If you are using WSL, you need to map the serial to WSL, in this way you can connect the camera in WSL.
+   1) Download and install usbipd:
+      https://github.com/dorssel/usbipd-win/releases/latest
+      download x64 msi, and install.
+   2) List all of the USB devices connected to Windows by opening PowerShell in administrator mode and entering the following command. Once the devices are listed, select and copy the bus ID of the device you’d like to attach to WSL.
+      ```
+      usbipd list
+      ```
+   3) Before attaching the USB device, the command usbipd bind must be used to share the device, allowing it to be attached to WSL. This requires administrator privileges. Select the bus ID of the device you would like to use in WSL and run the following command. After running the command, verify that the device is shared using the command usbipd list again.
+      ```
+      usbipd bind --busid 4-4
+      ```
+   4) To attach the USB device, run the following command. (You no longer need to use an elevated administrator prompt.) Ensure that a WSL command prompt is open in order to keep the WSL 2 lightweight VM active. Note that as long as the USB device is attached to WSL, it cannot be used by Windows. Once attached to WSL, the USB device can be used by any distribution running as WSL 2. Verify that the device is attached using usbipd list. From the WSL prompt, run lsusb to verify that the USB device is listed and can be interacted with using Linux tools.
+      ```
+		usbipd attach --wsl --busid <busid>
+      ```
+   5) Open Ubuntu (or your preferred WSL command line) and list the attached USB devices using the command:
+      ```
+      lsusb
+      ```
 
 ## References
 

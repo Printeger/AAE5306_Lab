@@ -59,42 +59,6 @@ pip install rospkg
 - ROS Noetic is required for Task 2 (image extraction)
 - Windows users can skip Task 2 and use pre-extracted images
 
-### Key Parameters
-
-#### test_image_index
-- **Range**: 0 to (max_pairs - 1)
-- **Default**: 50
-- **Description**: Select which image pair to use for feature detection, matching, and depth recovery
-- **Recommendations**: 
-  - Choose middle frames (e.g., 50) to avoid boundary effects at dataset start/end
-  - Select scenes with rich texture for more features
-
-#### ratio_threshold
-- **Range**: 0.6 - 0.9
-- **Default**: 0.75
-- **Description**: Lowe's ratio test threshold for filtering ambiguous matches
-- **Recommendations**:
-  - 0.7: High precision, low recall
-  - 0.8: Balanced
-  - 0.9: Low precision, high recall
-
-#### epipolar_threshold
-- **Range**: 1.0 - 5.0 (pixels)
-- **Default**: 2.0
-- **Description**: Maximum y-coordinate difference for stereo image pairs
-- **Recommendations**:
-  - Rectified images: 1.0-2.0
-  - Unrectified images: 3.0-5.0
-
-#### min_depth / max_depth
-- **Range**: > 0 (meters)
-- **Default**: 0.5 / 15.0
-- **Description**: Valid depth range for filtering outliers
-- **Recommendations**:
-  - Adjust based on specific scene
-  - Too small min_depth includes close-range noise
-  - Too large max_depth includes distant low-precision points
-
 
 ## References
 

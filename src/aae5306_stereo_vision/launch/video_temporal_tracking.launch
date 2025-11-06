@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="video_file" default="/home/cooper/code/ws/AAE5306_Lab/ball.mp4" doc="Path to MP4 video file"/>
+  <arg name="frame_rate" default="30.0" doc="Video processing frame rate"/>
+  <arg name="visualize" default="true" doc="Publish frame and track visualization topics"/>
+  <arg name="loop_video" default="true" doc="Loop video playback when reaching the end"/>
+  <arg name="config_file" default="$(find aae5306_stereo_vision)/config/stereo_params.yaml" doc="Configuration file path"/>
+
+  <!-- Load configuration parameters -->
+  <rosparam command="load" file="$(arg config_file)" />
+
+  <!-- Override video file and frame rate from arguments -->
+  <param name="/aae5306_stereo_vision/nodes/video_temporal_tracking/video_file" value="$(arg video_file)" />
+  <param name="/aae5306_stereo_vision/nodes/video_temporal_tracking/frame_rate" value="$(arg frame_rate)" />
+  <param name="/aae5306_stereo_vision/nodes/video_temporal_tracking/visualize" value="$(arg visualize)" />
+  <param name="/aae5306_stereo_vision/nodes/video_temporal_tracking/loop_video" value="$(arg loop_video)" />
+
+  <!-- Video Temporal Tracking Node -->
+  <node name="video_temporal_tracking" pkg="aae5306_stereo_vision" type="video_temporal_tracking_node.py" output="screen">
+    <param name="video_file" value="$(arg video_file)" />
+    <param name="frame_rate" value="$(arg frame_rate)" />
+    <param name="visualize" value="$(arg visualize)" />
+    <param name="loop_video" value="$(arg loop_video)" />
+  </node>
+
+<!-- RViz Visualization -->
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find aae5306_stereo_vision)/rviz/stereo_vision.rviz" output="screen"/>
+</launch>

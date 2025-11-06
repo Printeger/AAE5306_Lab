@@ -100,13 +100,17 @@ aae5306_stereo_vision:
             - 1.0
   processing:
     detector:
-      type: orb # sift / orb for detection & matching # harris / fast for detection
+      type: fast # sift / orb for detection & matching # harris / fast for detection
       publish_rate: 10.0
       visualize: true
     matching:
       ratio_threshold: 0.75
       epipolar_threshold: 2.0
       max_delay: 0.1
+      max_features: 100
+      min_features: 80
+      use_ransac: true
+      use_flow_back: true
       visualize: true
     depth:
       min_depth: 0.5
@@ -115,6 +119,17 @@ aae5306_stereo_vision:
       max_ray_depth: 12.0  
       max_delay: 0.1
       visualize: true
+    tracking:
+      max_features: 100
+      min_features: 80
+      motion_threshold: 1.0
+      quality_level: 0.01
+      min_distance: 7
+      fb_threshold: 1.5
+      error_threshold: 20.0
+      track_history: 30
+      bg_history: 300
+      bg_var_threshold: 32.0
   topics:
     inputs:
       cam0: /cam0/image_raw
@@ -130,10 +145,18 @@ aae5306_stereo_vision:
       feature_matching:
         matches_image: /stereo_vision/matches_image
         match_stats: /stereo_vision/match_stats
+      optical_flow_matching:
+        matches_image: /stereo_vision/optical_flow_matches_image
+        temporal_tracks_image: /stereo_vision/optical_flow_temporal_tracks_image
+        match_stats: /stereo_vision/optical_flow_match_stats
       depth_recovery:
         pointcloud: /stereo_vision/pointcloud
         depth_image: /stereo_vision/depth_image
         depth_stats: /stereo_vision/depth_stats
+      video_temporal_tracking:
+        frame_image: /stereo_vision/video_frame
+        temporal_tracks_image: /stereo_vision/video_temporal_tracks
+        track_stats: /stereo_vision/video_track_stats
   frames:
     cam0: cam0
     cam1: cam1
@@ -149,9 +172,19 @@ aae5306_stereo_vision:
       type: feature_matching
       left_camera: cam0
       right_camera: cam1
+    optical_flow_matching:
+      type: optical_flow_matching
+      left_camera: cam0
+      right_camera: cam1
     depth_recovery:
       type: depth_recovery
       left_camera: cam0
       right_camera: cam1
+    video_temporal_tracking:
+      type: video_temporal_tracking
+      video_file: /home/cooper/code/ws/AAE5306_Lab/drone_fly_downscale.mp4
+      frame_rate: 30
+      visualize: true
+      loop_video: true
   stereo:
     baseline: 0.110074

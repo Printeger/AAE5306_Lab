@@ -1,0 +1,18 @@
+<!--
+  Optical Flow Matching Launch File
+
+  This launch file starts optical flow-based feature matching for testing.
+
+  Usage:
+    roslaunch aae5306_stereo_vision optical_flow_matching.launch
+-->
+
+<launch>
+  <arg name="config_file" default="$(find aae5306_stereo_vision)/config/stereo_params.yaml"/>
+
+  <rosparam command="load" file="$(arg config_file)"/>
+
+  <node name="optical_flow_matching" pkg="aae5306_stereo_vision" type="optical_flow_matching_node.py" output="screen"/>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find aae5306_stereo_vision)/rviz/stereo_vision.rviz" output="screen"/>
+
+</launch>

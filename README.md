@@ -20,6 +20,8 @@ AAE5306_Lab
 	│   │       ├── depth_recovery_node.py
 	│   │       ├── feature_detection_node.py
 	│   │       ├── feature_matching_node.py
+	│   │       ├── optical_flow_matching_node.py
+	│   │       ├── video_temporal_tracking_node.py
 	│   │       ├── launch
 	│   │       │   ├── depth_recovery.launch
 	│   │       │   ├── feature_detection.launch
@@ -36,6 +38,38 @@ AAE5306_Lab
 	│   ├── utils.py
 	│   └── yaml_parser.py
 ```
+
+## Optical Flow Video Tracking Node
+
+The file `video_temporal_tracking_node.py` streams frames from an MP4 file and
+tracks a single moving object using Shi-Tomasi corners with Lucas-Kanade optical
+flow. The node publishes both the raw frames and an overlay image showing the
+tracked feature trails, plus timing statistics via `MatchStats`.
+
+### Launching the tracker
+
+Use the provided launch file to load configuration parameters and start the
+node:
+
+```bash
+roslaunch aae5306_stereo_vision video_temporal_tracking.launch \
+	video_file:=/home/cooper/code/ws/AAE5306_Lab/drone_fly_downscale.mp4 \
+	visualize:=true \
+	loop_video:=true
+```
+
+Key runtime parameters (`rosparam` or launch arguments):
+
+- `video_file` – path to the MP4 clip to track (defaults to the downscaled drone video).
+- `frame_rate` – processing timer frequency in Hz.
+- `visualize` – toggles publishing of `/stereo_vision/video_frame` and `/stereo_vision/video_temporal_tracks`.
+- `loop_video` – rewinds the clip when the end is reached for continuous demos.
+
+Published outputs:
+
+- `/stereo_vision/video_frame` (`sensor_msgs/Image`) – original BGR frame stream.
+- `/stereo_vision/video_temporal_tracks` (`sensor_msgs/Image`) – overlay with feature trails and IDs.
+- `/stereo_vision/video_track_stats` (`aae5306_stereo_vision/MatchStats`) – telemetry with timing and active track counts.
 
 ## Requirements
 - ROS noetic
@@ -106,6 +140,6 @@ This code is for educational purposes only.
 
 ---
 
-**Last Updated:** 2025-10-29  
+**Last Updated:** 2025-11-06  
 **Author:** AAE5306 Teaching Team  
 **Course:** AAE5306 - Visual Technologies in Low-Altitude Economy

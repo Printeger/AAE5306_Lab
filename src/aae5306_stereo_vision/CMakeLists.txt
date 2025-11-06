@@ -50,6 +50,8 @@ catkin_install_python(PROGRAMS
   feature_detection_node.py
   feature_matching_node.py
   depth_recovery_node.py
+  optical_flow_matching_node.py
+  video_temporal_tracking_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
